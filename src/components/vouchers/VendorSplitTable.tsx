@@ -1,7 +1,7 @@
 import React from 'react';
 import { ExpenseCategory, Department, VendorSplitItem } from '@/types/database';
-import { Plus, Trash2, Store, Calculator, Receipt, Building2 } from 'lucide-react';
-import { formatINR, cn } from '@/lib/utils';
+import { Plus, Trash2, Store, Calculator } from 'lucide-react';
+import { formatINR } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
 interface VendorSplitTableProps {
@@ -107,7 +107,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
           <div className="col-span-1">#</div>
           <div className="col-span-3">Vendor / Shop Name *</div>
           <div className="col-span-2">Category *</div>
-          <div className="col-span-2">Department</div>
+          <div className="col-span-2">Department *</div>
           <div className="col-span-2">Bill No. / Particulars</div>
           <div className="col-span-2 text-right">Amount (₹) *</div>
         </div>
@@ -146,7 +146,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                       label: c.category_name,
                     }))}
                     placeholder="Category..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -160,7 +160,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                       label: d.department_name,
                     }))}
                     placeholder="Dept..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -259,13 +259,13 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                         label: c.category_name,
                       }))}
                       placeholder="Category..."
-                      allowCustom={true}
+                      allowCustom={false}
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="block text-[11px] font-medium text-slate-700 dark:text-zinc-300">
-                      Department
+                      Department *
                     </label>
                     <SearchableSelect
                       value={row.department_name}
@@ -275,7 +275,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                         label: d.department_name,
                       }))}
                       placeholder="Dept..."
-                      allowCustom={true}
+                      allowCustom={false}
                     />
                   </div>
                 </div>
@@ -336,7 +336,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-slate-500 dark:text-zinc-400 font-medium font-sans">Total Payout:</span>
             <span className="px-2.5 py-1 rounded-[4px] bg-white dark:bg-[#1f1f1f] border border-slate-200 dark:border-[#2e2e2e] text-xs font-semibold font-mono tabular-nums text-emerald-600 dark:text-[#3ecf8e]">
-              ₹ {formatINR(totalSplitAmount)}
+              {formatINR(totalSplitAmount)}
             </span>
           </div>
         </div>

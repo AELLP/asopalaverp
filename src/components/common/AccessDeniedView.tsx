@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, ArrowLeft, Home, Lock } from 'lucide-react';
+import { ShieldAlert, Home, Lock } from 'lucide-react';
 import { useUIStore } from '@/store/uiStore';
 
 interface AccessDeniedViewProps {
@@ -54,7 +54,7 @@ export const AccessDeniedView: React.FC<AccessDeniedViewProps> = ({
 
         {/* Security Notice */}
         <div className="p-3 rounded-[6px] bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#2e2e2e] text-[11px] text-slate-500 dark:text-zinc-400 font-mono text-left">
-          <p className="font-semibold text-slate-700 dark:text-zinc-300">🛡️ Terminal Security Safeguard:</p>
+          <p className="font-semibold text-slate-700 dark:text-zinc-300">🛡️ Security Safeguard:</p>
           <p className="mt-0.5">
             If you need access to this page or showroom data, please request permission from your Store Manager or Super Admin.
           </p>

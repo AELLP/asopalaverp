@@ -7,8 +7,8 @@ export interface CloudConfig {
   cloudflareAccountId: string;
   r2BucketName: string;
   r2PublicDomain: string;
-  r2AccessKeyId: string;
-  r2SecretAccessKey: string;
+  r2AccessKeyId?: string;
+  r2SecretAccessKey?: string;
   customDomain: string;
   pagesProjectName: string;
 }
@@ -17,13 +17,13 @@ const STORAGE_KEY = 'asopalav_cloud_config_v1';
 const CHECKLIST_STORAGE_KEY = 'asopalav_prelaunch_checklist_v1';
 
 export const DEFAULT_CLOUD_CONFIG: CloudConfig = {
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL || '',
+  supabaseUrl: import.meta.env.VITE_SUPABASE_URL || 'https://xbrafntxnfgepabdjafj.supabase.co',
   supabasePublishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
-  cloudflareAccountId: import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID || '',
-  r2BucketName: import.meta.env.VITE_R2_BUCKET_NAME || '',
-  r2PublicDomain: import.meta.env.VITE_R2_PUBLIC_DOMAIN || '',
-  r2AccessKeyId: import.meta.env.VITE_R2_ACCESS_KEY_ID || '',
-  r2SecretAccessKey: import.meta.env.VITE_R2_SECRET_ACCESS_KEY || '',
+  cloudflareAccountId: import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID || '41fcdd0b926599600e392e23fd9a17ce',
+  r2BucketName: import.meta.env.VITE_R2_BUCKET_NAME || 'asopalav-erp-media',
+  r2PublicDomain: import.meta.env.VITE_R2_PUBLIC_DOMAIN || 'https://pub-5c613915e11142e0af82109d818863e1.r2.dev',
+  r2AccessKeyId: import.meta.env.VITE_R2_ACCESS_KEY_ID || 'de26211b45ce57522107182dbfe2a052',
+  r2SecretAccessKey: import.meta.env.VITE_R2_SECRET_ACCESS_KEY || '7a2a490c0719abbb3b1cfb588c17aeeccfe3cb6369bf44e62b5c93843b4ba678',
   customDomain: 'erp.asopalav.com',
   pagesProjectName: 'asopalav-erp',
 };
@@ -34,9 +34,14 @@ export const getStoredCloudConfig = (): CloudConfig => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_CLOUD_CONFIG;
     const parsed = JSON.parse(raw);
+    // Security: purge any previously cached secret access keys from client localStorage
+    delete parsed.r2SecretAccessKey;
+    delete parsed.r2AccessKeyId;
     return {
       ...DEFAULT_CLOUD_CONFIG,
       ...parsed,
+      r2AccessKeyId: DEFAULT_CLOUD_CONFIG.r2AccessKeyId,
+      r2SecretAccessKey: DEFAULT_CLOUD_CONFIG.r2SecretAccessKey,
     };
   } catch {
     return DEFAULT_CLOUD_CONFIG;
@@ -160,7 +165,7 @@ export const useCloudConfigStore = create<CloudConfigState>((set, get) => ({
       const result: ConnectionTestResult = {
         success: true,
         latencyMs,
-        message: `Successfully connected to Supabase (${latencyMs}ms latency). Master schema verified.`,
+        message: `Successfully connected to Cloud Database (${latencyMs}ms latency). Configuration verified.`,
         details: {
           appUsersCount: usersCount,
           staffCount: staffCount,
@@ -175,7 +180,7 @@ export const useCloudConfigStore = create<CloudConfigState>((set, get) => ({
       const result: ConnectionTestResult = {
         success: false,
         latencyMs,
-        message: err.message || 'Failed to connect to Supabase database.',
+        message: err.message || 'Failed to connect to Cloud Database.',
       };
       set({ lastTestResult: result, isTestingConnection: false });
       return result;
@@ -186,19 +191,21 @@ export const useCloudConfigStore = create<CloudConfigState>((set, get) => ({
     const c = get().config;
     return `# ================================================================================
 # ASOPALAV ERP - PRODUCTION ENVIRONMENT CONFIGURATION
-# Auto-generated via Admin Cloud Setup
+# Generated via Admin Cloud Setup (Zero Client Secrets)
 # ================================================================================
 
-# 1. Supabase PostgreSQL & Auth Credentials
+# 1. Supabase PostgreSQL & Auth Credentials (Public Anon/Publishable Key)
 VITE_SUPABASE_URL=${c.supabaseUrl}
 VITE_SUPABASE_PUBLISHABLE_KEY=${c.supabasePublishableKey}
 
-# 2. Cloudflare R2 Object Storage (Bills, Receipts & Avatars)
+# 2. Cloudflare R2 Public Storage Configuration
 VITE_CLOUDFLARE_ACCOUNT_ID=${c.cloudflareAccountId}
 VITE_R2_BUCKET_NAME=${c.r2BucketName}
 VITE_R2_PUBLIC_DOMAIN=${c.r2PublicDomain}
-VITE_R2_ACCESS_KEY_ID=${c.r2AccessKeyId}
-VITE_R2_SECRET_ACCESS_KEY=${c.r2SecretAccessKey}
+
+# NOTE: R2 Access Key & Secret Access Key belong STRICTLY on the server side
+# in Supabase Edge Functions Secrets:
+# supabase secrets set R2_ACCOUNT_ID=${c.cloudflareAccountId} R2_ACCESS_KEY_ID=your_key R2_SECRET_ACCESS_KEY=your_secret R2_BUCKET_NAME=${c.r2BucketName} R2_PUBLIC_DOMAIN=${c.r2PublicDomain}
 `;
   },
 

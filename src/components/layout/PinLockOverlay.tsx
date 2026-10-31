@@ -114,16 +114,16 @@ export const PinLockOverlay: React.FC = () => {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-3 select-none font-sans overflow-y-auto"
+      className="fixed inset-0 z-50 bg-black flex items-center justify-center p-3 select-none font-sans overflow-y-auto"
     >
       <div
         ref={cardRef}
-        className="w-full max-w-[420px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] rounded-[12px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative text-slate-900 dark:text-white animate-in fade-in zoom-in-95 duration-200 my-auto"
+        className="w-full max-w-[420px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] rounded-[12px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative text-slate-900 dark:text-white animate-in fade-in zoom-in-95 duration-200 my-auto"
       >
         {/* Top Brand Logo & Lock Indicator */}
         <div className="flex items-center justify-between w-full pb-2 border-b border-slate-100 dark:border-[#242424]">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-[6px] bg-slate-50 dark:bg-[#202020] border border-slate-200 dark:border-[#2e2e2e] flex items-center justify-center shadow-xs">
+            <div className="w-7 h-7 rounded-[6px] bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#242424] flex items-center justify-center shadow-xs">
               <AsopalavLogo size={16} />
             </div>
             <div className="text-left">
@@ -131,7 +131,7 @@ export const PinLockOverlay: React.FC = () => {
                 Asopalav ERP
               </span>
               <span className="text-xs font-medium text-slate-900 dark:text-white leading-tight">
-                POS Terminal Lock
+                Screen Lock
               </span>
             </div>
           </div>
@@ -143,7 +143,7 @@ export const PinLockOverlay: React.FC = () => {
         </div>
 
         {/* Current User Detail Banner */}
-        <div className="w-full p-3 rounded-[8px] bg-slate-50 dark:bg-[#1f1f1f] border border-slate-200 dark:border-[#282828] flex items-center justify-between">
+        <div className="w-full p-3 rounded-[8px] bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#242424] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <UserAvatar
               src={user?.avatar_url}
@@ -223,7 +223,7 @@ export const PinLockOverlay: React.FC = () => {
                 key={digit}
                 type="button"
                 onClick={() => handleKeypadPress(digit)}
-                className="h-10 rounded-[6px] border border-slate-200 dark:border-[#2a2a2a] bg-slate-50/70 dark:bg-[#1f1f1f] hover:bg-slate-100 dark:hover:bg-[#282828] active:bg-slate-200 dark:active:bg-[#333] text-sm font-mono font-medium text-slate-900 dark:text-white transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
+                className="h-10 rounded-[6px] border border-slate-200 dark:border-[#242424] bg-slate-50/70 dark:bg-[#181818] hover:bg-slate-100 dark:hover:bg-[#222222] active:bg-slate-200 dark:active:bg-[#282828] text-sm font-mono font-medium text-slate-900 dark:text-white transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
               >
                 {digit}
               </button>
@@ -231,7 +231,7 @@ export const PinLockOverlay: React.FC = () => {
             <button
               type="button"
               onClick={handleClear}
-              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#2a2a2a] bg-slate-100/50 dark:bg-[#1a1a1a] hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:border-rose-300 dark:hover:border-rose-800 text-xs font-mono text-slate-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
+              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#242424] bg-slate-100/50 dark:bg-[#181818] hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:border-rose-300 dark:hover:border-rose-800 text-xs font-mono text-slate-600 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
               title="Clear PIN"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -239,14 +239,14 @@ export const PinLockOverlay: React.FC = () => {
             <button
               type="button"
               onClick={() => handleKeypadPress('0')}
-              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#2a2a2a] bg-slate-50/70 dark:bg-[#1f1f1f] hover:bg-slate-100 dark:hover:bg-[#282828] active:bg-slate-200 dark:active:bg-[#333] text-sm font-mono font-medium text-slate-900 dark:text-white transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
+              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#242424] bg-slate-50/70 dark:bg-[#181818] hover:bg-slate-100 dark:hover:bg-[#222222] active:bg-slate-200 dark:active:bg-[#282828] text-sm font-mono font-medium text-slate-900 dark:text-white transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
             >
               0
             </button>
             <button
               type="button"
               onClick={handleBackspace}
-              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#2a2a2a] bg-slate-100/50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#282828] text-xs font-mono text-slate-600 dark:text-zinc-400 transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
+              className="h-10 rounded-[6px] border border-slate-200 dark:border-[#242424] bg-slate-100/50 dark:bg-[#181818] hover:bg-slate-100 dark:hover:bg-[#222222] text-xs font-mono text-slate-600 dark:text-zinc-400 transition-colors cursor-pointer shadow-2xs flex items-center justify-center select-none active:scale-[0.98]"
               title="Backspace"
             >
               <Delete className="w-3.5 h-3.5" />
@@ -258,7 +258,7 @@ export const PinLockOverlay: React.FC = () => {
             type="submit"
             className="w-full h-10 px-4 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer active:scale-[0.99] mt-2"
           >
-            <span>Unlock Counter Terminal (Enter)</span>
+            <span>Unlock Counter Screen (Enter)</span>
             <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
           </button>
         </form>

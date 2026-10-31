@@ -1,5 +1,5 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertOctagon, RotateCcw, Home, Terminal } from 'lucide-react';
+import { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertOctagon, RotateCcw, Terminal } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -25,6 +25,20 @@ export class AppErrorBoundary extends Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught Asopalav ERP runtime error:', error, errorInfo);
     this.setState({ errorInfo });
+
+    // Auto-recover from stale Vite deployment chunks (Failed to fetch dynamically imported module)
+    const isChunkLoadFailed =
+      error?.message?.includes('Failed to fetch dynamically imported module') ||
+      error?.message?.includes('dynamically imported module') ||
+      error?.name === 'ChunkLoadError';
+
+    if (isChunkLoadFailed) {
+      const hasRetried = sessionStorage.getItem('asopalav_chunk_reload');
+      if (!hasRetried) {
+        sessionStorage.setItem('asopalav_chunk_reload', 'true');
+        window.location.reload();
+      }
+    }
   }
 
   private handleReset = () => {

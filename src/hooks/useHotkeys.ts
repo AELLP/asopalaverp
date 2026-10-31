@@ -121,7 +121,7 @@ export function useHotkeys() {
         return;
       }
 
-      // Alt + 2: Staff Food Split Mode
+      // Alt + 2: Staff Split Mode
       if (e.altKey && key === '2') {
         e.preventDefault();
         e.stopPropagation();
@@ -230,7 +230,7 @@ export function useHotkeys() {
         return;
       }
 
-      // F4: Cash Box & Bank / Treasury Float
+      // F4: Cash Drawer & UPI / Treasury Float
       if (key === 'F4') {
         e.preventDefault();
         e.stopPropagation();

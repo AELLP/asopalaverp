@@ -1,26 +1,23 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
 import { useUIStore } from '@/store/uiStore';
 import { useVouchers } from '@/hooks/useVouchers';
 import { erpService } from '@/lib/erpService';
-import { AppUser, AppRole, RolePermissions, StaffMember } from '@/types/database';
+import { AppUser, StaffMember } from '@/types/database';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { MasterDataDrawer, MasterDrawerType } from '@/components/settings/MasterDataDrawer';
 import { SegmentedControl } from '@/components/ui';
 import { showToast } from '@/components/ui/ToastContainer';
+import { confirmDialog } from '@/store/dialogStore';
 import bcrypt from 'bcryptjs';
 import { logSecurityEvent } from '@/lib/audit';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import {
   UserPlus,
   FileSpreadsheet,
-  Search,
-  Building2,
-  Shield,
-  ShieldCheck,
-  ShieldAlert,
-  Users,
+  Search,  Shield,
+  ShieldCheck,  Users,
   Edit2,
   Plus,
   Check,
@@ -28,34 +25,19 @@ import {
   UserX,
   ChevronLeft,
   ChevronRight,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  Download,
-  Code,
-  Terminal,
-  MoreVertical,
-  ChevronDown,
-  X,
+  ArrowUpDown,  MoreVertical,  X,
   SlidersHorizontal,
   CheckSquare,
   Square,
   Sparkles,
-  Phone,
-  Briefcase,
-  Key,
+  Phone,  Key,
   Lock,
-  Unlock,
-  User,
-  MapPin,
-  Tag,
-  Eye,
+  Unlock,  Eye,
   EyeOff,
   AlertCircle,
   RefreshCw,
 } from 'lucide-react';
 import { cn, formatIndianPhone } from '@/lib/utils';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 
 type UserSortField = 'username' | 'name' | 'role' | 'status';
@@ -574,10 +556,9 @@ const ResetUserPasswordModal: React.FC<ResetUserPasswordModalProps> = ({
 
 export const StaffDirectoryPage: React.FC = () => {
   const { user, can, getAllowedBranches } = useAuthStore();
-  const isDeveloper = isPrivilegedAdminRole(user?.role_code);
-  const { branches, selectedBranchId } = useBranchStore();
+    const { branches, selectedBranchId } = useBranchStore();
   const { setBulkImportOpen } = useUIStore();
-  const { staff, refresh } = useVouchers();
+  const { staff, refresh, loading } = useVouchers();
 
   const allowedBranches = getAllowedBranches(branches);
   const canViewAll = isPrivilegedAdminRole(user?.role_code) || can('can_view_all_branches');
@@ -586,9 +567,7 @@ export const StaffDirectoryPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [staffBranchFilter, setStaffBranchFilter] = useState(canViewAll ? (selectedBranchId || 'ALL') : (allowedBranches[0]?.branch_id || 'Aellp-ASI'));
   const [usersList, setUsersList] = useState<AppUser[]>([]);
-  const [rolesList, setRolesList] = useState<AppRole[]>([]);
-  const [permissionsList, setPermissionsList] = useState<RolePermissions[]>([]);
-
+    
   // Sorting
   const [userSortField, setUserSortField] = useState<UserSortField>('username');
   const [userSortOrder, setUserSortOrder] = useState<SortOrder>('asc');
@@ -601,8 +580,7 @@ export const StaffDirectoryPage: React.FC = () => {
 
   // Pro Enterprise Controls
   const [density, setDensity] = useState<TableDensity>('normal');
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
+    const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
   const [activeRowDropdownId, setActiveRowDropdownId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
@@ -616,8 +594,7 @@ export const StaffDirectoryPage: React.FC = () => {
   );
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const exportRef = useRef<HTMLDivElement | null>(null);
-  const columnPickerRef = useRef<HTMLDivElement | null>(null);
+    const columnPickerRef = useRef<HTMLDivElement | null>(null);
 
   // Drawer States
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -645,14 +622,8 @@ export const StaffDirectoryPage: React.FC = () => {
 
   const loadDirectory = async () => {
     try {
-      const [u, r, p] = await Promise.all([
-        erpService.getAppUsers(),
-        erpService.getAppRoles(),
-        erpService.getAllRolePermissions(),
-      ]);
+      const u = await erpService.getAppUsers();
       setUsersList(u);
-      setRolesList(r);
-      setPermissionsList(p);
     } catch (e) {
       console.error('Error loading staff directory:', e);
     }
@@ -694,50 +665,62 @@ export const StaffDirectoryPage: React.FC = () => {
   const handleToggleStaffStatus = async (s: StaffMember, currentActive: boolean) => {
     const newActive = !currentActive;
     const actionDesc = newActive ? 'Reactivate' : 'Deactivate / Mark as Left Company';
-    if (window.confirm(`Are you sure you want to ${actionDesc} for ${s.first_name} ${s.last_name} (${s.staff_code})? ${!newActive ? 'This will immediately REVOKE all system login access.' : ''}`)) {
-      try {
-        const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
-        const userRole = user?.role_code || 'Super_Admin';
-        await erpService.toggleStaffActiveStatus(s.staff_code, newActive, `${s.first_name} ${s.last_name}`, userName, userRole);
-        loadDirectory();
-        refresh();
-        showToast({
-          type: 'success',
-          title: newActive ? 'Staff Reactivated' : 'Staff Deactivated & Access Cut',
-          message: newActive
-            ? `Staff member ${s.first_name} is active.`
-            : `Staff member ${s.first_name} deactivated and login access revoked.`,
-        });
-      } catch (err: any) {
-        showToast({
-          type: 'error',
-          title: 'Action Failed',
-          message: err.message || 'Could not update staff status.',
-        });
-      }
-    }
+    await confirmDialog({
+      title: `${actionDesc} Staff Member`,
+      message: `Are you sure you want to ${actionDesc.toLowerCase()} for ${s.first_name} ${s.last_name} (${s.staff_code})? ${!newActive ? 'This will immediately revoke all system login access.' : ''}`,
+      confirmText: newActive ? 'Reactivate' : 'Deactivate Staff',
+      variant: newActive ? 'primary' : 'danger',
+      onConfirm: async () => {
+        try {
+          const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
+          const userRole = user?.role_code || 'Super_Admin';
+          await erpService.toggleStaffActiveStatus(s.staff_code, newActive, `${s.first_name} ${s.last_name}`, userName, userRole);
+          loadDirectory();
+          refresh();
+          showToast({
+            type: 'success',
+            title: newActive ? 'Staff Reactivated' : 'Staff Deactivated & Access Cut',
+            message: newActive
+              ? `Staff member ${s.first_name} is active.`
+              : `Staff member ${s.first_name} deactivated and login access revoked.`,
+          });
+        } catch (err: any) {
+          showToast({
+            type: 'error',
+            title: 'Action Failed',
+            message: err.message || 'Could not update staff status.',
+          });
+        }
+      },
+    });
   };
 
   const handleRevokeLoginAccess = async (targetUser: AppUser) => {
-    if (window.confirm(`Cut & revoke login access for @${targetUser.username}? User will be logged out immediately.`)) {
-      try {
-        const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
-        const userRole = user?.role_code || 'Super_Admin';
-        await erpService.saveAppUser({ ...targetUser, is_active: false }, true, userName, userRole);
-        loadDirectory();
-        showToast({
-          type: 'success',
-          title: 'Login Access Revoked',
-          message: `Login access for @${targetUser.username} is now deactivated.`,
-        });
-      } catch (err: any) {
-        showToast({
-          type: 'error',
-          title: 'Revocation Failed',
-          message: err.message || 'Could not revoke login access.',
-        });
-      }
-    }
+    await confirmDialog({
+      title: 'Revoke Login Access',
+      message: `Cut and revoke login access for @${targetUser.username}? The user will be logged out immediately.`,
+      confirmText: 'Revoke Access',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
+          const userRole = user?.role_code || 'Super_Admin';
+          await erpService.saveAppUser({ ...targetUser, is_active: false }, true, userName, userRole);
+          loadDirectory();
+          showToast({
+            type: 'success',
+            title: 'Login Access Revoked',
+            message: `Login access for @${targetUser.username} is now deactivated.`,
+          });
+        } catch (err: any) {
+          showToast({
+            type: 'error',
+            title: 'Revocation Failed',
+            message: err.message || 'Could not revoke login access.',
+          });
+        }
+      },
+    });
   };
 
   useEffect(() => {
@@ -749,9 +732,7 @@ export const StaffDirectoryPage: React.FC = () => {
   // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent | TouchEvent) {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setIsExportOpen(false);
-      }
+      
       if (columnPickerRef.current && !columnPickerRef.current.contains(e.target as Node)) {
         setIsColumnPickerOpen(false);
       }
@@ -827,6 +808,8 @@ export const StaffDirectoryPage: React.FC = () => {
         cmp = `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`);
       } else if (userSortField === 'role') {
         cmp = a.role_code.localeCompare(b.role_code);
+      } else if (userSortField === 'status') {
+        cmp = Number(b.is_active !== false) - Number(a.is_active !== false);
       }
       return userSortOrder === 'desc' ? -cmp : cmp;
     });
@@ -960,7 +943,6 @@ export const StaffDirectoryPage: React.FC = () => {
         setSelectedIds(new Set());
         setFocusedIndex(-1);
         setActiveRowDropdownId(null);
-        setIsExportOpen(false);
         setIsColumnPickerOpen(false);
       }
     };
@@ -969,58 +951,7 @@ export const StaffDirectoryPage: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentDisplayedRecords, focusedIndex, activeTab]);
 
-  const handleExportData = (format: 'csv' | 'json' | 'sql') => {
-    setIsExportOpen(false);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const esc = (val?: string | null) => (val ? `'${val.replace(/'/g, "''")}'` : 'NULL');
-
-    if (activeTab === 'logins') {
-      const recordsToExport = selectedIds.size > 0
-        ? filteredUsers.filter((u) => selectedIds.has(u.id))
-        : filteredUsers;
-
-      if (format === 'json') {
-        downloadBlob(`asopalav_users_${dateStr}.json`, JSON.stringify(recordsToExport, null, 2), 'application/json');
-      } else if (format === 'csv') {
-        const headers = ['Username', 'First Name', 'Last Name', 'Role', 'Email', 'Assigned Branches', 'Status'];
-        const rows = recordsToExport.map((u) => [
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.role_code,
-          u.email || '',
-          (u.assigned_branches || []).join(';'),
-          'Active',
-        ]);
-        const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${c}"`).join(','))].join('\n');
-        downloadBlob(`asopalav_users_${dateStr}.csv`, csv, 'text/csv');
-      }
-    } else {
-      const recordsToExport = selectedIds.size > 0
-        ? filteredStaff.filter((s) => selectedIds.has(s.staff_code))
-        : filteredStaff;
-
-      if (format === 'json') {
-        downloadBlob(`asopalav_staff_${dateStr}.json`, JSON.stringify(recordsToExport, null, 2), 'application/json');
-      } else if (format === 'csv') {
-        const headers = ['Staff Code', 'First Name', 'Middle Name', 'Last Name', 'Mobile Number', 'Department', 'Designation', 'Branch'];
-        const rows = recordsToExport.map((s) => [
-          s.staff_code,
-          s.first_name,
-          s.middle_name || '',
-          s.last_name || '',
-          s.mobile_number || '',
-          s.department_name || '',
-          s.designation || '',
-          s.branch_code || '',
-        ]);
-        const csv = [headers.join(','), ...rows.map((r) => r.map((c) => `"${c}"`).join(','))].join('\n');
-        downloadBlob(`asopalav_staff_${dateStr}.csv`, csv, 'text/csv');
-      }
-    }
-  };
-
-  const densityStyles = {
+    const densityStyles = {
     compact: { header: 'py-1.5 px-3 text-[11px]', cell: 'py-1.5 px-3 text-xs' },
     normal: { header: 'py-2.5 px-3.5 text-xs', cell: 'py-2.5 px-3.5 text-xs' },
     relaxed: { header: 'py-3.5 px-4 text-xs', cell: 'py-3.5 px-4 text-xs' },
@@ -1068,43 +999,8 @@ export const StaffDirectoryPage: React.FC = () => {
               className="h-8.5 w-8.5 flex items-center justify-center rounded-[6px] border border-slate-200/80 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.06] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-all cursor-pointer shadow-xs"
               title="Refresh Directory"
             >
-              <Users className="w-3.5 h-3.5" />
+              <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin text-[#3ecf8e]')} />
             </button>
-
-            {/* Export Menu */}
-            <div className="relative z-20" ref={exportRef}>
-              <button
-                type="button"
-                onClick={() => setIsExportOpen(!isExportOpen)}
-                className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200/80 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.06] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-black/[0.06] dark:hover:bg-white/[0.1] text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export</span>
-                <ChevronDown className="w-3 h-3 text-slate-400 dark:text-[#707070]" />
-              </button>
-              {isExportOpen && (
-                <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-44 bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] rounded-[6px] shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
-                  <button
-                    type="button"
-                    onClick={() => handleExportData('csv')}
-                    className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-                    CSV format
-                  </button>
-                  {isDeveloper && (
-                    <button
-                      type="button"
-                      onClick={() => handleExportData('json')}
-                      className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                    >
-                      <Code className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                      JSON format
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
 
             {/* Single Primary Emerald CTA */}
             {activeTab === 'logins' ? (
@@ -1383,8 +1279,15 @@ export const StaffDirectoryPage: React.FC = () => {
                         </div>
                       </div>
 
-                      <span className="px-2 py-0.5 rounded-[4px] bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-200 dark:border-[#3ecf8e]/20 text-[10px] font-mono font-medium">
-                        Active
+                      <span
+                        className={cn(
+                          'px-2 py-0.5 rounded-[4px] text-[10px] font-mono font-medium border',
+                          u.is_active !== false
+                            ? 'bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border-emerald-200 dark:border-[#3ecf8e]/20'
+                            : 'bg-slate-100 dark:bg-[#252525] text-slate-500 dark:text-zinc-400 border-slate-200 dark:border-[#333]'
+                        )}
+                      >
+                        {u.is_active !== false ? 'Active' : 'Inactive'}
                       </span>
                     </div>
 
@@ -1515,9 +1418,16 @@ export const StaffDirectoryPage: React.FC = () => {
                     )}
 
                     {visibleUserCols.has('status') && (
-                      <th className={cn("border-r border-slate-200 dark:border-[#242424] text-center", densityStyles.header)}>
+                      <th
+                        onClick={() => {
+                          if (userSortField === 'status') setUserSortOrder(userSortOrder === 'asc' ? 'desc' : 'asc');
+                          else { setUserSortField('status'); setUserSortOrder('asc'); }
+                        }}
+                        className={cn("border-r border-slate-200 dark:border-[#242424] text-center cursor-pointer hover:bg-slate-100 dark:hover:bg-[#202020] transition-colors", densityStyles.header)}
+                      >
                         <div className="flex items-center justify-center gap-1.5">
                           <span>Status</span>
+                          <ArrowUpDown className="w-3 h-3 text-slate-400 dark:text-[#707070] opacity-60" />
                         </div>
                       </th>
                     )}
@@ -1604,8 +1514,15 @@ export const StaffDirectoryPage: React.FC = () => {
 
                         {visibleUserCols.has('status') && (
                           <td className={cn("border-r border-slate-100 dark:border-[#1f1f1f] text-center font-mono", densityStyles.cell)}>
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-[4px] text-[10px] bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-200 dark:border-[#3ecf8e]/20 font-medium">
-                              Active
+                            <span
+                              className={cn(
+                                'inline-flex items-center px-2 py-0.5 rounded-[4px] text-[10px] font-medium border',
+                                u.is_active !== false
+                                  ? 'bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border-emerald-200 dark:border-[#3ecf8e]/20'
+                                  : 'bg-slate-100 dark:bg-[#252525] text-slate-500 dark:text-zinc-400 border-slate-200 dark:border-[#333]'
+                              )}
+                            >
+                              {u.is_active !== false ? 'Active' : 'Inactive'}
                             </span>
                           </td>
                         )}
@@ -2146,21 +2063,12 @@ export const StaffDirectoryPage: React.FC = () => {
         {/* Floating Batch Actions Dock (When Rows Selected) */}
         {selectedIds.size > 0 && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 px-4 py-2.5 rounded-[12px] bg-white dark:bg-[#1a1a1a] text-slate-900 dark:text-white shadow-2xl border border-slate-200 dark:border-[#2e2e2e] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200">
-            <div className="flex items-center gap-2 pr-3 border-r border-slate-200 dark:border-[#2e2e2e]">
+            <div className="flex items-center gap-2 pr-3">
               <span className="w-2 h-2 rounded-full bg-[#3ecf8e] animate-pulse" />
               <span className="font-mono font-semibold text-xs tabular-nums text-slate-900 dark:text-white">
                 {selectedIds.size} Selected
               </span>
             </div>
-
-            <button
-              type="button"
-              onClick={() => handleExportData('csv')}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#222222] hover:bg-slate-100 dark:hover:bg-[#282828] text-xs font-mono transition-colors cursor-pointer"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-              <span>Export CSV</span>
-            </button>
 
             <button
               type="button"

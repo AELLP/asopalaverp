@@ -9,7 +9,7 @@ import {
   ExpenseCategory,
   Department,
 } from '@/types/database';
-import { formatINR } from './utils';
+import { formatINR, formatVoucherNumber } from './utils';
 
 export type SearchCategory =
   | 'all'
@@ -236,7 +236,7 @@ export class GlobalSearchEngine {
       if (options.dateFrom && v.payment_date && v.payment_date < options.dateFrom) continue;
       if (options.dateTo && v.payment_date && v.payment_date > options.dateTo) continue;
 
-      const highPrio = [v.voucher_number || '', v.recipient_name || '', v.bill_number || ''];
+      const highPrio = [formatVoucherNumber(v.voucher_number), v.voucher_number || '', v.recipient_name || '', v.bill_number || ''];
       const body = [
         v.category_name || '',
         v.department_name || '',
@@ -258,8 +258,8 @@ export class GlobalSearchEngine {
           id: `voucher-${v.id}`,
           category: 'vouchers',
           categoryLabel: 'Expense Voucher',
-          title: `Voucher #${v.voucher_number} • ${v.recipient_name}`,
-          subtitle: `${v.category_name} · ${v.department_name || 'Counter'} · ${v.payment_method === 'Physical_Cash' ? 'Cash Drawer' : 'Online Bank'} · By ${v.created_by_name}`,
+          title: `Voucher #${formatVoucherNumber(v.voucher_number)} • ${v.recipient_name}`,
+          subtitle: `${v.category_name} · ${v.department_name || 'Counter'} · ${v.payment_method === 'Physical_Cash' ? 'Cash Drawer' : 'Online UPI'} · By ${v.created_by_name}`,
           badge: {
             text: v.status || 'Approved',
             variant: v.status === 'Voided' ? 'rose' : 'emerald',
@@ -436,14 +436,14 @@ export class GlobalSearchEngine {
 
     // 5. INDEX: System Actions & Page Shortcuts
     const systemActions: { title: string; subtitle: string; page: string; hotkey?: string; tags: string[] }[] = [
-      { title: 'Add New Expense', subtitle: 'Pay cash or online bank payment', page: 'new-voucher', hotkey: 'F2', tags: ['create', 'new', 'voucher', 'expense', 'bill', 'pay', 'invoice'] },
-      { title: 'Cash Box & Bank', subtitle: 'Cash in box, bank balance & move money to safe', page: 'treasury', hotkey: 'F4', tags: ['float', 'safe drop', 'till', 'cash in hand', 'drawer', 'treasury', 'box'] },
+      { title: 'Add New Expense', subtitle: 'Pay cash or online UPI payment', page: 'new-voucher', hotkey: 'F2', tags: ['create', 'new', 'voucher', 'expense', 'bill', 'pay', 'invoice'] },
+      { title: 'Cash Drawer & UPI', subtitle: 'Cash in box, UPI balance & drawer passbook', page: 'treasury', hotkey: 'F4', tags: ['float', 'till', 'cash in hand', 'drawer', 'treasury', 'box'] },
       { title: 'Staff Advances', subtitle: 'Give and clear staff money advances', page: 'advances', hotkey: 'F7', tags: ['advance', 'iou', 'salary', 'staff loan', 'reimbursement'] },
+      { title: 'Financial Reports', subtitle: 'Tally Prime export, staff advances, CA & audit pack', page: 'reports', hotkey: 'Reports', tags: ['reports', 'tally', 'export', 'ca', 'auditor', 'chartered accountant', 'statement', 'tax', '40a3'] },
       { title: 'All Expenses', subtitle: 'View and search all past bills & expenses', page: 'expenses', hotkey: 'F3', tags: ['ledger', 'register', 'table', 'export', 'csv', 'audit', 'bills'] },
       { title: 'Staff Directory', subtitle: 'Manage shop staff and PIN logins', page: 'staff', hotkey: 'F10', tags: ['staff', 'employee', 'cashier', 'user', 'role', 'pin'] },
       { title: 'Shop Settings', subtitle: 'Shop branches, categories and accounts', page: 'settings', hotkey: 'F11', tags: ['settings', 'config', 'categories', 'departments', 'branches', 'periods'] },
-      { title: 'Activity History', subtitle: 'History of all actions and changes', page: 'audit', hotkey: 'F8', tags: ['security', 'audit', 'hash', 'logs', 'compliance', 'history'] },
-      { title: 'Alerts & Messages', subtitle: 'Reminders, safe moves, and warnings', page: 'notifications', hotkey: 'Alerts', tags: ['notifications', 'alerts', 'warnings', 'messages'] },
+      { title: 'Security Log Book', subtitle: 'Tamper-proof audit logs & activity ledger (Admin & Dev)', page: 'audit', hotkey: 'Logs', tags: ['audit', 'logs', 'security', 'history', 'telemetry', 'tamper', 'admin', 'dev'] },
       { title: 'Search Everything', subtitle: 'Search all bills, people, notes and advances', page: 'search', hotkey: 'Ctrl+K', tags: ['search', 'query', 'find', 'everything'] },
     ];
 

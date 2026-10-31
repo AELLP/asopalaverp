@@ -22,6 +22,7 @@ interface BranchState {
 }
 
 let branchFetchInFlight: Promise<void> | null = null;
+let lastForceFetchTime = 0;
 
 const getInitialBranch = (): string => {
   if (typeof window !== 'undefined') {
@@ -54,7 +55,7 @@ export const useBranchStore = create<BranchState>((set, get) => ({
       showToast({
         type: 'warning',
         title: 'Access Restricted',
-        message: 'You are only authorized to access your assigned showroom terminal.',
+        message: 'You are only authorized to access your assigned showroom branch.',
       });
       return;
     }
@@ -132,14 +133,13 @@ export const useBranchStore = create<BranchState>((set, get) => ({
 
   fetchBranchesAndWallets: async (force = false) => {
     const now = Date.now();
+    if (force && now - lastForceFetchTime < 3000) return;
+    if (force) lastForceFetchTime = now;
     const { lastFetched, branches } = get();
 
-    // Cache valid for 5 minutes when not forced; 30-second cooldown when forced to prevent burning Postgres quotas
-    if (lastFetched > 0 && branches.length >= DEFAULT_BRANCHES.length) {
-      if (!force && now - lastFetched < 5 * 60 * 1000) {
-        return;
-      }
-      if (force && now - lastFetched < 30 * 1000) {
+    // Cache valid for 5 minutes when not forced; force=true always fetches immediately from Supabase
+    if (!force && lastFetched > 0 && branches.length >= DEFAULT_BRANCHES.length) {
+      if (now - lastFetched < 5 * 60 * 1000) {
         return;
       }
     }
@@ -166,10 +166,33 @@ export const useBranchStore = create<BranchState>((set, get) => ({
           wRes.data.forEach((w) => {
             walletMap[w.branch_id] = w;
             walletMap[normalizeBranchCode(w.branch_id)] = w;
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem(`asopalav_wallet_${w.branch_id}`, JSON.stringify(w));
+                localStorage.setItem(`asopalav_wallet_${normalizeBranchCode(w.branch_id)}`, JSON.stringify(w));
+              } catch {}
+            }
           });
+
+          // Compute unified ALL showrooms wallet
+          const totalCash = wRes.data.reduce((sum, w) => sum + (Number(w.cash_balance) || 0), 0);
+          const totalUpi = wRes.data.reduce((sum, w) => sum + (Number(w.upi_balance) || 0), 0);
+          const allWallet: BranchWallet = {
+            branch_id: 'ALL',
+            cash_balance: totalCash,
+            upi_balance: totalUpi,
+          };
+          walletMap['ALL'] = allWallet;
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('asopalav_wallet_ALL', JSON.stringify(allWallet));
+            } catch {}
+          }
         }
         set({ wallets: walletMap });
         set({ lastFetched: Date.now() });
+
+// Read query completed: Zustand state updated reactively
       } catch (e) {
         console.warn('Error fetching branches and wallets from database:', e);
       } finally {

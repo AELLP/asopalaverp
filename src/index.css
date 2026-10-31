@@ -1,5 +1,11 @@
-@import '@fontsource/inter/index.css';
-@import '@fontsource/jetbrains-mono/index.css';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+@import '@fontsource/jetbrains-mono/latin-600.css';
+@import '@fontsource/jetbrains-mono/latin-700.css';
 
 @tailwind base;
 @tailwind components;
@@ -9,7 +15,7 @@
   :root {
     --color-canvas: #ffffff;
     --color-canvas-soft: #fafafa;
-    --color-canvas-night: #141414;
+    --color-canvas-night: #000000;
     --color-surface-card: #ffffff;
     --color-ink: #171717;
     --color-primary: #3ecf8e;
@@ -18,7 +24,7 @@
     --color-hairline-cool: #ededed;
     --color-hairline-strong: #c7c7c7;
     --color-hairline-control: #a1a1a1;
-    --color-hairline-dark: #2e2e2e;
+    --color-hairline-dark: #222222;
     color-scheme: light dark;
   }
 
@@ -33,14 +39,16 @@
     color: #171717;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
 
   .dark body,
   body.dark,
-  .dark {
-    background-color: #141414;
+  .dark,
+  .dark #root {
+    background-color: #000000 !important;
     color: #ededed;
   }
 
@@ -105,19 +113,21 @@
   }
 
   /* =========================================================
-     SOFT DARK MODE (Charcoal Slate / Anti-Fatigue)
+     SOFT DARK MODE (Anti-Fatigue Charcoal Slate Night)
+     - Distinct from pure OLED Dark (#000000)
+     - Calibrated for 12-hour cashier counter eye comfort
      ========================================================= */
   .soft-dark {
-    --color-canvas: #181a20;
-    --color-canvas-soft: #1f222b;
-    --color-canvas-night: #181a20;
-    --color-surface-card: #21242d;
+    --color-canvas: #14161d;
+    --color-canvas-soft: #181b24;
+    --color-canvas-night: #14161d;
+    --color-surface-card: #1a1d26;
     --color-ink: #f1f5f9;
-    --color-hairline: #2f3442;
-    --color-hairline-cool: #282c38;
-    --color-hairline-strong: #383e50;
-    --color-hairline-control: #383e50;
-    --color-hairline-dark: #2f3442;
+    --color-hairline: #2e3447;
+    --color-hairline-cool: #262b3a;
+    --color-hairline-strong: #3b4259;
+    --color-hairline-control: #3b4259;
+    --color-hairline-dark: #2e3447;
     color-scheme: dark;
   }
 
@@ -125,31 +135,42 @@
   .soft-dark body,
   body.soft-dark,
   html.soft-dark,
-  .soft-dark #root {
-    background-color: #181a20 !important;
+  .soft-dark #root,
+  .soft-dark .workspace-canvas {
+    background-color: #14161d !important;
     color: #f1f5f9 !important;
   }
 
   /* Root Canvas & Base Pages */
+  .soft-dark .dark\:bg-black,
   .soft-dark .dark\:bg-canvas-night,
   .soft-dark .dark\:bg-\[\#121212\],
-  .soft-dark .dark\:bg-\[\#141414\],
-  .soft-dark .dark\:bg-\[\#151515\],
   .soft-dark .dark\:bg-\[\#111111\],
   .soft-dark .dark\:bg-\[\#0f0f0f\],
   .soft-dark .dark\:bg-slate-950,
   .soft-dark .dark\:bg-zinc-950 {
-    background-color: #181a20 !important;
+    background-color: #14161d !important;
   }
 
-  /* Translucent & Backdrop Canvas Elements (Mobile Nav, Floating Toolbars) */
+  /* Structural Shell: Sidebar & Topbar Containers */
+  .soft-dark aside,
+  .soft-dark header,
+  .soft-dark header > div,
+  .soft-dark aside > div:first-child,
+  .soft-dark aside > div:last-child,
+  .soft-dark .dark\:bg-\[\#161616\],
+  .soft-dark .dark\:bg-\[\#141414\] {
+    background-color: #181b24 !important;
+  }
+
+  /* Translucent & Backdrop Canvas Elements */
   .soft-dark .dark\:bg-\[\#171717\]\/95,
   .soft-dark .dark\:bg-\[\#141414\]\/95,
   .soft-dark .dark\:bg-\[\#121212\]\/95,
   .soft-dark .dark\:bg-\[\#161616\]\/95,
   .soft-dark .dark\:bg-\[\#181818\]\/95,
   .soft-dark .dark\:bg-\[\#202020\]\/95 {
-    background-color: rgba(33, 36, 45, 0.95) !important;
+    background-color: #181b24 !important;
   }
   .soft-dark .dark\:bg-\[\#141414\]\/90,
   .soft-dark .dark\:bg-\[\#121212\]\/90,
@@ -157,29 +178,33 @@
   .soft-dark .dark\:bg-\[\#161616\]\/90,
   .soft-dark .dark\:bg-\[\#222222\]\/90,
   .soft-dark .dark\:bg-canvas-night\/90 {
-    background-color: rgba(24, 26, 32, 0.90) !important;
+    background-color: #181b24 !important;
   }
   .soft-dark .dark\:bg-\[\#141414\]\/50,
   .soft-dark .dark\:bg-\[\#1f1f1f\]\/50 {
-    background-color: rgba(24, 26, 32, 0.50) !important;
+    background-color: #181b24 !important;
   }
   .soft-dark .dark\:bg-black\/80,
-  .soft-dark .dark\:bg-black\/85 {
-    background-color: rgba(14, 16, 20, 0.85) !important;
+  .soft-dark .dark\:bg-black\/85,
+  .soft-dark .dark\:bg-black\/75 {
+    background-color: #101217 !important;
   }
 
-  /* Primary Cards, Header, Topbar, Modals & Surface Panels */
-  .soft-dark .dark\:bg-\[\#161616\],
+  /* Primary Surface Cards, Metric Cards, Modals, Drawers, Tables */
+  .soft-dark .dark\:bg-\[\#151515\],
   .soft-dark .dark\:bg-\[\#171717\],
   .soft-dark .dark\:bg-\[\#181818\],
   .soft-dark .dark\:bg-\[\#1a1a1a\],
   .soft-dark .dark\:bg-slate-900,
   .soft-dark .dark\:bg-zinc-900,
-  .soft-dark .card-container {
-    background-color: #21242d !important;
+  .soft-dark .card-container,
+  .soft-dark [class*="MetricCard"],
+  .soft-dark .dark\:bg-white\/5,
+  .soft-dark .dark\:bg-white\/10 {
+    background-color: #1a1d26 !important;
   }
 
-  /* Secondary Panels, Table Toolbars, Filter Bars, Chips & Action Buttons */
+  /* Secondary Elevated Surfaces: Toolbars, Filters, Popovers, Dropdowns, Chips, Sub-view Tabs */
   .soft-dark .dark\:bg-\[\#1c1c1c\],
   .soft-dark .dark\:bg-\[\#1e1e1e\],
   .soft-dark .dark\:bg-\[\#1f1f1f\],
@@ -192,22 +217,27 @@
   .soft-dark .dark\:bg-\[\#2a2a2a\],
   .soft-dark .dark\:bg-\[\#2c2c2c\],
   .soft-dark .dark\:bg-\[\#333\],
+  .soft-dark .dark\:bg-\[\#383838\],
+  .soft-dark .dark\:bg-slate-800,
+  .soft-dark .dark\:bg-zinc-800,
   .soft-dark .dark\:bg-slate-800\/50,
-  .soft-dark .dark\:bg-zinc-800\/50 {
-    background-color: #282c37 !important;
+  .soft-dark .dark\:bg-zinc-800\/50,
+  .soft-dark .dark\:bg-white\/\[0\.06\],
+  .soft-dark .dark\:bg-white\/\[0\.04\] {
+    background-color: #212532 !important;
   }
 
-  /* Light Inverted Badges/Buttons in Dark Mode (e.g. dark:bg-white, dark:bg-zinc-100) */
+  /* Light Inverted Badges/Buttons in Dark Mode */
   .soft-dark .dark\:bg-white,
   .soft-dark .dark\:bg-zinc-100,
   .soft-dark .dark\:bg-zinc-200 {
     background-color: #f1f5f9 !important;
-    color: #0f172a !important;
+    color: #171717 !important;
   }
   .soft-dark .dark\:bg-white *,
   .soft-dark .dark\:bg-zinc-100 *,
   .soft-dark .dark\:bg-zinc-200 * {
-    color: #0f172a !important;
+    color: #171717 !important;
   }
 
   /* Emerald brand buttons / badges */
@@ -221,6 +251,7 @@
 
   /* Interactive Elements, Buttons, Hover States & Selected States */
   .soft-dark .dark\:hover\:bg-\[\#1a1a1a\]:hover,
+  .soft-dark .dark\:hover\:bg-\[\#1c1c1c\]:hover,
   .soft-dark .dark\:hover\:bg-\[\#1e1e1e\]:hover,
   .soft-dark .dark\:hover\:bg-\[\#1f1f1f\]:hover,
   .soft-dark .dark\:hover\:bg-\[\#202020\]:hover,
@@ -232,7 +263,7 @@
   .soft-dark .dark\:hover\:bg-slate-800:hover,
   .soft-dark .dark\:hover\:bg-zinc-800:hover,
   .soft-dark .dark\:hover\:bg-slate-700:hover {
-    background-color: #313746 !important;
+    background-color: #282d3d !important;
   }
 
   /* Hairline Borders & Dividers */
@@ -256,8 +287,10 @@
   .soft-dark .dark\:border-zinc-800,
   .soft-dark .dark\:border-zinc-700,
   .soft-dark .dark\:border-slate-200\/90,
-  .soft-dark .dark\:border-slate-200\/80 {
-    border-color: #2f3442 !important;
+  .soft-dark .dark\:border-slate-200\/80,
+  .soft-dark .dark\:border-white\/\[0\.08\],
+  .soft-dark .dark\:border-white\/\[0\.06\] {
+    border-color: #2e3447 !important;
   }
 
   /* Divide Lines */
@@ -267,7 +300,7 @@
   .soft-dark .dark\:divide-\[\#2e2e2e\],
   .soft-dark .dark\:divide-slate-800,
   .soft-dark .dark\:divide-zinc-800 {
-    border-color: #2f3442 !important;
+    border-color: #2e3447 !important;
   }
 
   /* Hover Borders */
@@ -277,12 +310,12 @@
   .soft-dark .dark\:hover\:border-\[\#484848\]:hover,
   .soft-dark .dark\:hover\:border-zinc-500:hover,
   .soft-dark .dark\:hover\:border-slate-700:hover {
-    border-color: #454c60 !important;
+    border-color: #424b66 !important;
   }
 
   /* Text Colors in Soft Dark */
   .soft-dark .dark\:text-white {
-    color: #f8fafc !important;
+    color: #f1f5f9 !important;
   }
   .soft-dark .dark\:text-zinc-100,
   .soft-dark .dark\:text-slate-100,
@@ -293,23 +326,25 @@
   .soft-dark .dark\:text-zinc-200,
   .soft-dark .dark\:text-slate-200,
   .soft-dark .dark\:text-gray-200 {
-    color: #e2e8f0 !important;
+    color: #cbd5e1 !important;
   }
   .soft-dark .dark\:text-zinc-300,
   .soft-dark .dark\:text-slate-300,
   .soft-dark .dark\:text-gray-300 {
-    color: #cbd5e1 !important;
+    color: #94a3b8 !important;
   }
   .soft-dark .dark\:text-zinc-400,
   .soft-dark .dark\:text-slate-400,
   .soft-dark .dark\:text-gray-400,
   .soft-dark .dark\:text-\[\#a1a1a1\] {
-    color: #94a3b8 !important;
+    color: #64748b !important;
   }
   .soft-dark .dark\:text-zinc-500,
   .soft-dark .dark\:text-slate-500,
   .soft-dark .dark\:text-gray-500,
-  .soft-dark .dark\:text-\[\#707070\] {
+  .soft-dark .dark\:text-\[\#707070\],
+  .soft-dark .dark\:text-\[\#8e8e93\],
+  .soft-dark .dark\:text-\[\#8e8e8e\] {
     color: #64748b !important;
   }
   .soft-dark .dark\:text-zinc-600,
@@ -321,8 +356,8 @@
   .soft-dark input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
   .soft-dark select,
   .soft-dark textarea {
-    background-color: #1a1c24 !important;
-    border-color: #343a4a !important;
+    background-color: #212532 !important;
+    border-color: #2e3447 !important;
     color: #f1f5f9 !important;
   }
   .soft-dark input:focus,
@@ -334,13 +369,13 @@
 
   /* Monospace Elements & Badges */
   .soft-dark .dark\:bg-\[\#222\] {
-    background-color: #2b303d !important;
+    background-color: #212532 !important;
   }
 
   /* AnnouncementBanner: Broadcast mode */
   .soft-dark .bg-\[\#f8f3ef\],
   .soft-dark .dark\:bg-\[\#0b0e0d\] {
-    background-color: #0e1114 !important;
+    background-color: #14161d !important;
   }
   .soft-dark .text-\[\#001a10\],
   .soft-dark .dark\:text-\[\#f8f3ef\] {
@@ -349,10 +384,10 @@
 
   /* Scrollbars in Soft Dark */
   .soft-dark ::-webkit-scrollbar-thumb {
-    background: #383e50 !important;
+    background: #383f56 !important;
   }
   .soft-dark ::-webkit-scrollbar-thumb:hover {
-    background: #474f66 !important;
+    background: #4a5472 !important;
   }
 
   h1, h2, h3, h4, h5, h6 {

@@ -30,7 +30,6 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom', 'zustand'],
           'vendor-supabase': ['@supabase/supabase-js'],
           'vendor-icons': ['lucide-react'],
-          'vendor-animation': ['gsap', '@gsap/react'],
           'vendor-utils': ['date-fns', 'clsx', 'tailwind-merge', 'bcryptjs'],
         },
       },

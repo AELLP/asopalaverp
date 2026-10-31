@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { ERPNotification } from '@/types/database';
-import { supabase } from '@/lib/supabase';
 
 export interface BroadcastMessage {
   id: string;
@@ -35,31 +34,8 @@ export const useNotificationStore = create<NotificationState>()(
       setBroadcast: (msg) => set({ broadcast: msg }),
 
       fetchCloudNotifications: async () => {
-        try {
-          const { data, error } = await supabase
-            .from('app_notifications')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(50);
-
-          if (!error && data && data.length > 0) {
-            const mapped: ERPNotification[] = data.map((d: any) => ({
-              id: d.id,
-              title: d.title,
-              message: d.message,
-              type: d.type || 'info',
-              target_roles: d.target_roles || ['Super_Admin', 'Store_Manager', 'Cashier', 'Auditor'],
-              branch_id: d.branch_id,
-              reference_id: d.reference_id,
-              amount: d.amount,
-              read_by: Array.isArray(d.read_by) ? d.read_by : [],
-              created_at: d.created_at,
-            }));
-            set({ notifications: mapped });
-          }
-        } catch (e) {
-          console.warn('Cloud notification fetch fallback:', e);
-        }
+        // Notifications are maintained locally in Zustand persist storage ('asopalav-erp-notifications-storage').
+        // Avoid firing phantom queries to non-existent remote table to eliminate 404 console errors.
       },
 
       addNotification: async (data) => {
@@ -79,25 +55,6 @@ export const useNotificationStore = create<NotificationState>()(
             new CustomEvent('asopalav:notification-received', { detail: newNotif })
           );
         }
-
-        // Persist to Supabase app_notifications
-        try {
-          await supabase.from('app_notifications').insert([
-            {
-              title: data.title,
-              message: data.message,
-              type: data.type || 'info',
-              target_roles: data.target_roles || ['Super_Admin', 'Store_Manager', 'Cashier', 'Auditor'],
-              branch_id: data.branch_id || null,
-              reference_id: data.reference_id || null,
-              amount: data.amount || null,
-              read_by: [],
-              created_at: newNotif.created_at,
-            },
-          ]);
-        } catch (e) {
-          console.warn('Notification cloud insert fallback:', e);
-        }
       },
 
       markAsRead: async (id: string, username: string) => {
@@ -110,20 +67,11 @@ export const useNotificationStore = create<NotificationState>()(
         set((state) => ({
           notifications: state.notifications.map((n) => {
             if (n.id === id && !n.read_by.includes(username)) {
-              return { ...n, read_by: [...n.read_by, username] };
+              return { ...n, read_by: updatedReadBy };
             }
             return n;
           }),
         }));
-
-        try {
-          await supabase
-            .from('app_notifications')
-            .update({ read_by: updatedReadBy })
-            .eq('id', id);
-        } catch (e) {
-          console.warn('Notification mark read fallback:', e);
-        }
       },
 
       markAllAsRead: async (username: string) => {
@@ -134,25 +82,6 @@ export const useNotificationStore = create<NotificationState>()(
             read_by: n.read_by.includes(username) ? n.read_by : [...n.read_by, username],
           })),
         }));
-
-        try {
-          const unreadIds = get().notifications
-            .filter((n) => !n.read_by.includes(username))
-            .map((n) => n.id);
-          if (unreadIds.length > 0) {
-            // Background update
-            for (const n of get().notifications) {
-              if (!n.read_by.includes(username)) {
-                await supabase
-                  .from('app_notifications')
-                  .update({ read_by: [...n.read_by, username] })
-                  .eq('id', n.id);
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('Notification mark all read fallback:', e);
-        }
       },
 
       clearAll: () => {

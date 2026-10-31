@@ -285,7 +285,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       if (!isAuthenticated || !sessionLoginTime) return false;
       const elapsed = Date.now() - sessionLoginTime;
       if (elapsed >= SESSION_LIFETIME_MS) {
-        logout('Your 4-hour session has expired for showroom terminal security. Please log in again.');
+        logout('Your 4-hour session has expired for showroom security. Please log in again.');
         return true;
       }
       return false;
@@ -319,7 +319,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       showToast({
         type: 'info',
         title: 'Counter Locked',
-        message: 'Terminal locked with PIN protection.',
+        message: 'Screen locked with PIN protection.',
       });
     },
 

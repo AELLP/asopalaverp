@@ -50,7 +50,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   disabled = false,
   clearable = false,
   id,
-  allowCustom = true,
+  allowCustom = false,
   size = 'md',
   align = 'left',
   placement = 'auto',

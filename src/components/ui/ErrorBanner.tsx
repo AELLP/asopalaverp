@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { AlertCircle, AlertTriangle, CheckCircle, Info, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from 'lucide-react';
 
 export interface ErrorBannerProps {
   type?: 'error' | 'warning' | 'info' | 'success';

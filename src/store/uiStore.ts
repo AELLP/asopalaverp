@@ -8,6 +8,7 @@ export type PageId =
   | 'expenses'
   | 'treasury'
   | 'advances'
+  | 'reports'
   | 'audit'
   | 'staff'
   | 'settings'
@@ -21,6 +22,7 @@ export const VALID_PAGES: PageId[] = [
   'expenses',
   'treasury',
   'advances',
+  'reports',
   'audit',
   'staff',
   'settings',

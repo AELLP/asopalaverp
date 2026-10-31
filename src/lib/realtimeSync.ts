@@ -58,11 +58,31 @@ export function initRealtimeSync(allowedBranchIds: string[] = []) {
             // H-6: Only update local state if this branch belongs to the current user
             if (!shouldPassEvent(updatedWallet.branch_id)) return;
             const branchStore = useBranchStore.getState();
-            branchStore.setWallets({
-              ...branchStore.wallets,
-              [updatedWallet.branch_id]: updatedWallet,
-              [normalizeBranchCode(updatedWallet.branch_id)]: updatedWallet,
-            });
+            const currentWallets = { ...branchStore.wallets };
+            currentWallets[updatedWallet.branch_id] = updatedWallet;
+            currentWallets[normalizeBranchCode(updatedWallet.branch_id)] = updatedWallet;
+
+            // Recompute ALL showrooms aggregate
+            const branchKeys = Object.keys(currentWallets).filter((k) => k.startsWith('Aellp-'));
+            const totalCash = branchKeys.reduce((sum, k) => sum + (Number(currentWallets[k]?.cash_balance) || 0), 0);
+            const totalUpi = branchKeys.reduce((sum, k) => sum + (Number(currentWallets[k]?.upi_balance) || 0), 0);
+            const allWallet: BranchWallet = {
+              branch_id: 'ALL',
+              cash_balance: totalCash,
+              upi_balance: totalUpi,
+            };
+            currentWallets['ALL'] = allWallet;
+
+            branchStore.setWallets(currentWallets);
+
+            if (typeof window !== 'undefined') {
+              try {
+                localStorage.setItem(`asopalav_wallet_${updatedWallet.branch_id}`, JSON.stringify(updatedWallet));
+                localStorage.setItem(`asopalav_wallet_${normalizeBranchCode(updatedWallet.branch_id)}`, JSON.stringify(updatedWallet));
+                localStorage.setItem('asopalav_wallet_ALL', JSON.stringify(allWallet));
+              } catch {}
+            }
+
             window.dispatchEvent(new CustomEvent('asopalav:wallet-updated', { detail: updatedWallet }));
           }
         }
@@ -255,14 +275,6 @@ export function initRealtimeSync(allowedBranchIds: string[] = []) {
           if (payload.new) {
             window.dispatchEvent(new CustomEvent('asopalav:audit-log-created', { detail: payload.new }));
           }
-        }
-      )
-      // 8. Live Notifications
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'app_notifications' },
-        () => {
-          window.dispatchEvent(new Event('asopalav:notifications-updated'));
         }
       )
       .subscribe((status, err) => {

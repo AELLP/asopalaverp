@@ -16,10 +16,9 @@ import { PinLockOverlay } from '@/components/layout/PinLockOverlay';
 import { AnnouncementBanner } from '@/components/layout/AnnouncementBanner';
 import { ToastContainer, showToast } from '@/components/ui/ToastContainer';
 import { PageLoadingSkeleton } from '@/components/ui/PageLoadingSkeleton';
-import { cn } from '@/lib/utils';
 
 // Route-Based Dynamic Imports (React.lazy)
-const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
+import { LoginPage } from '@/pages/LoginPage';
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const NewVoucherPage = lazy(() => import('@/pages/NewVoucherPage').then((m) => ({ default: m.NewVoucherPage })));
 const AllExpensesPage = lazy(() => import('@/pages/AllExpensesPage').then((m) => ({ default: m.AllExpensesPage })));
@@ -29,8 +28,11 @@ const CashDrawerTreasuryPage = lazy(() =>
 const StaffAdvancesPage = lazy(() =>
   import('@/pages/StaffAdvancesPage').then((m) => ({ default: m.StaffAdvancesPage }))
 );
-const SecurityAuditPage = lazy(() =>
-  import('@/pages/SecurityAuditPage').then((m) => ({ default: m.SecurityAuditPage }))
+const ReportsPage = lazy(() =>
+  import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage }))
+);
+const AuditLogPage = lazy(() =>
+  import('@/pages/AuditLogPage').then((m) => ({ default: m.AuditLogPage }))
 );
 const StaffDirectoryPage = lazy(() =>
   import('@/pages/StaffDirectoryPage').then((m) => ({ default: m.StaffDirectoryPage }))
@@ -40,9 +42,6 @@ const ShowroomSettingsPage = lazy(() =>
 );
 const ProfileSecurityPage = lazy(() =>
   import('@/pages/ProfileSecurityPage').then((m) => ({ default: m.ProfileSecurityPage }))
-);
-const NotificationsPage = lazy(() =>
-  import('@/pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage }))
 );
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
 import { AppErrorBoundary } from '@/components/common/AppErrorBoundary';
@@ -72,6 +71,9 @@ const ImageLightbox = lazy(() =>
 const PosQuickCalculator = lazy(() =>
   import('@/components/common/PosQuickCalculator').then((m) => ({ default: m.PosQuickCalculator }))
 );
+const ConfirmDialog = lazy(() =>
+  import('@/components/ui/ConfirmDialog').then((m) => ({ default: m.ConfirmDialog }))
+);
 
 const AccessDeniedView = lazy(() =>
   import('@/components/common/AccessDeniedView').then((m) => ({ default: m.AccessDeniedView }))
@@ -79,6 +81,14 @@ const AccessDeniedView = lazy(() =>
 
 import { VALID_PAGES } from '@/store/uiStore';
 import { initRealtimeSync, teardownRealtimeSync } from '@/lib/realtimeSync';
+
+// Handle stale Vite dynamic import chunk 404s after new Vercel deployments
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event) => {
+    console.warn('Vite preload error detected. Reloading for fresh deployment assets...', event);
+    window.location.reload();
+  });
+}
 
 // Prefetch high-frequency operational routes during browser idle time
 const prefetchCoreRoutes = () => {
@@ -88,6 +98,7 @@ const prefetchCoreRoutes = () => {
       import('@/pages/NewVoucherPage');
       import('@/pages/AllExpensesPage');
       import('@/pages/StaffAdvancesPage');
+      import('@/pages/ReportsPage');
     };
 
     if ('requestIdleCallback' in window) {
@@ -102,6 +113,7 @@ const PAGE_PERMISSIONS: Partial<Record<PageId, keyof RolePermissions>> = {
   'new-voucher': 'can_create_voucher',
   'treasury': 'can_inject_float',
   'advances': 'can_disburse_advance',
+  'reports': 'can_export_tally',
   'staff': 'can_manage_users_roles',
   'settings': 'can_manage_periods',
   'audit': 'can_view_audit_logs',
@@ -169,10 +181,16 @@ export const App: React.FC = () => {
 
   // Load branches, wallet state, realtime channel, and idle-prefetch routes
   useEffect(() => {
-    // Purge any stale mock cache keys from browser localStorage
+    // Purge any stale mock or pre-reconciliation cache keys from browser localStorage
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem('asopalav_pos_drafts_v1');
+        ['asopalav_wallet_Aellp-ASI', 'asopalav_wallet_ASI', 'asopalav_wallet_ALL'].forEach((k) => {
+          const raw = localStorage.getItem(k);
+          if (raw && (raw.includes('103050') || raw.includes('102900'))) {
+            localStorage.removeItem(k);
+          }
+        });
       } catch {}
     }
 
@@ -202,6 +220,39 @@ export const App: React.FC = () => {
       teardownRealtimeSync();
     }
   }, [isAuthenticated]);
+
+  // Solution 4: 30-Minute Counter Inactivity Auto-Lock (Prevents Unattended Session Hijacking)
+  useEffect(() => {
+    if (!isAuthenticated || isLocked) return;
+
+    const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+    let timeoutId: any = null;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        const { isLocked: currentLocked, isAuthenticated: currentAuth, lockScreen } = useAuthStore.getState();
+        if (currentAuth && !currentLocked) {
+          lockScreen();
+          showToast({
+            type: 'info',
+            title: 'Counter Auto-Locked',
+            message: 'Screen locked after 30 minutes of inactivity. Enter PIN to resume.',
+          });
+        }
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const activityEvents = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll'];
+    activityEvents.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
+
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      activityEvents.forEach((ev) => window.removeEventListener(ev, resetTimer));
+    };
+  }, [isAuthenticated, isLocked]);
 
   // 4-Hour Security Session Expiration Heartbeat
   useEffect(() => {
@@ -357,8 +408,8 @@ export const App: React.FC = () => {
   // If user is unauthenticated, render lazy Login portal with toast container
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen w-full bg-white dark:bg-[#141414] text-slate-900 dark:text-[#EDEDED]">
-        <Suspense fallback={<div className="h-screen w-screen bg-[#141414] flex items-center justify-center" />}>
+      <div className="min-h-screen w-full bg-slate-50 dark:bg-black text-slate-900 dark:text-[#EDEDED]">
+        <Suspense fallback={<div className="h-screen w-screen bg-black flex items-center justify-center" />}>
           <LoginPage />
         </Suspense>
         <Suspense fallback={null}>
@@ -401,16 +452,28 @@ export const App: React.FC = () => {
           );
         }
         return <StaffAdvancesPage />;
-      case 'audit':
-        return <SecurityAuditPage />;
+      case 'reports':
+        return <ReportsPage />;
       case 'staff':
         return <StaffDirectoryPage />;
       case 'settings':
         return <ShowroomSettingsPage />;
       case 'profile':
         return <ProfileSecurityPage />;
+      case 'audit':
+        if (!isPrivilegedAdminRole(user?.role_code)) {
+          return (
+            <AccessDeniedView
+              title="Security Log Book Locked"
+              pageName="Log Book"
+              message="Access to the Master Security Log Book is strictly restricted to System Administrators and Developers. Cryptographic audit trails are confidential."
+              onGoBack={() => useUIStore.getState().setActivePage('dashboard')}
+            />
+          );
+        }
+        return <AuditLogPage />;
       case 'notifications':
-        return <NotificationsPage />;
+        return <DashboardPage />;
       case '404':
         return <NotFoundPage />;
       default:
@@ -438,7 +501,7 @@ export const App: React.FC = () => {
           {/* Workspace Canvas Area with Suspense Fallback */}
           <main
             ref={mainRef}
-            className="flex-1 overflow-y-auto bg-white dark:bg-[#141414] focus:outline-none transition-all duration-200 ease-out flex flex-col p-0 pb-20 lg:pb-0"
+            className="workspace-canvas flex-1 overflow-y-auto bg-white dark:bg-[#141414] focus:outline-none transition-all duration-200 ease-out flex flex-col p-0 pb-20 lg:pb-0"
           >
             {!isLocked && (
               <PageTransition pageKey={activePage}>
@@ -455,7 +518,7 @@ export const App: React.FC = () => {
                   <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#1a1a1a] flex items-center justify-center">
                     <svg className="w-6 h-6 text-[#3ecf8e]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
                   </div>
-                  <p className="text-sm text-[#878787]">Terminal Locked</p>
+                  <p className="text-sm text-[#878787]">Screen Locked</p>
                 </div>
               </div>
             )}
@@ -478,6 +541,7 @@ export const App: React.FC = () => {
         <BulkMasterDataImportModal />
         <ImageLightbox />
         <ToastContainer />
+        <ConfirmDialog />
       </Suspense>
     </div>
   );

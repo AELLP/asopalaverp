@@ -218,6 +218,14 @@ export interface ExpenseVoucher {
   bill_photo_urls: string[];
   created_by_name: string;
   is_high_value?: boolean;
+  // Optional GST Breakdown for B2B Vendor Invoices
+  is_gst_invoice?: boolean;
+  vendor_gstin?: string | null;
+  taxable_amount?: number | null;
+  gst_rate?: number | null;
+  cgst_amount?: number | null;
+  sgst_amount?: number | null;
+  igst_amount?: number | null;
   approved_by_name?: string | null;
   approved_at?: string | null;
   status: 'Approved' | 'Pending_Approval' | 'Voided';
@@ -264,6 +272,8 @@ export interface StaffAdvance {
   salary_deducted_at?: string | null;
   salary_deducted_by_name?: string | null;
   created_at: string;
+  is_direct_voucher_advance?: boolean;
+  source_category?: string;
 }
 
 export interface CashClosing {
@@ -362,3 +372,31 @@ export interface SecurityAuditLog {
 }
 
 export type VoucherMode = 'Shop_Vendor' | 'Staff_Split' | 'Courier';
+
+export interface EodTillLockRecord {
+  id?: string;
+  branch_id: string;
+  lock_date: string; // YYYY-MM-DD
+  slip_id: string;
+  system_cash_balance: number;
+  physical_counted_cash: number;
+  cash_variance: number;
+  is_balanced: boolean;
+  denominations: Record<string, number>;
+  cashier_name: string;
+  supervisor_name: string;
+  notes?: string;
+  locked_at?: string;
+  created_at?: string;
+}
+
+export interface GstTaxRate {
+  id: string;
+  rate_percent: number;
+  rate_label: string;
+  is_active: boolean;
+  display_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+

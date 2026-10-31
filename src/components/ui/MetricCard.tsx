@@ -3,11 +3,11 @@ import { cn } from '@/lib/utils';
 
 export interface MetricCardProps {
   label: string;
-  value: string | number;
-  subValue?: string;
+  value: React.ReactNode;
+  subValue?: React.ReactNode;
   badge?: string;
   badgeColor?: 'emerald' | 'amber' | 'blue' | 'rose' | 'neutral';
-  statusText?: string;
+  statusText?: React.ReactNode;
   statusDotColor?: string;
   icon?: React.ElementType;
   className?: string;
@@ -67,7 +67,10 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
 
       {/* Main Metric Value */}
-      <div className="text-xl sm:text-2xl md:text-[24px] font-medium font-mono text-slate-900 dark:text-white tabular-nums tracking-tight truncate">
+      <div
+        title={typeof value === 'string' || typeof value === 'number' ? String(value) : undefined}
+        className="text-lg sm:text-xl lg:text-[22px] font-medium font-mono text-slate-900 dark:text-white tabular-nums tracking-tight truncate"
+      >
         {value}
       </div>
 

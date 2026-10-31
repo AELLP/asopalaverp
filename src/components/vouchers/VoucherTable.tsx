@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ExpenseVoucher, ExpenseCategory, Department } from '@/types/database';
 import { useUIStore } from '@/store/uiStore';
-import { useAuthStore } from '@/store/authStore';
-import { formatINR, formatDate, cn, triggerHaptic } from '@/lib/utils';
+import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
+import { formatINR, formatDate, formatVoucherNumber, cn, triggerHaptic, normalizeDateToYMD } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import {
   Search,
@@ -19,44 +19,21 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  X,
-  Sparkles,
-  Layers,
-  Banknote,
-  Smartphone,
-  CreditCard,
-  AlertCircle,
-  FileSpreadsheet,
-  Code,
-  Check,
-  SlidersHorizontal,
-  BarChart3,
-  Users,
-  Building2,
-  Terminal,
-  MoreVertical,
-  Activity,
-  Maximize2,
-  Minimize2,
-  CornerDownRight,
-  RotateCcw,
-  Calendar,
-  User,
-  Tag,
-  ShieldCheck,
-  HandCoins,
+  X,  Layers,
+  Coins,  CreditCard,  FileSpreadsheet,  SlidersHorizontal,
+  BarChart3,  Building2,  RotateCcw,  User,
+  Tag,  HandCoins,
   Coffee,
   Truck,
   Wrench,
   Store,
-  Zap,
-  PieChart,
-  Wallet,
+  Zap,  Wallet,
   CheckCircle2,
-} from 'lucide-react';
+  Printer,} from 'lucide-react';
+import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { openExclusivePopover } from '@/lib/popoverManager';
-import { erpService } from '@/lib/erpService';
+import { showToast } from '@/components/ui/ToastContainer';
 
 const VoucherCategoryAvatar: React.FC<{ category?: string | null; className?: string }> = ({ category, className }) => {
   const cat = (category || '').toLowerCase();
@@ -129,6 +106,16 @@ interface VoucherTableProps {
   departments: Department[];
   showActionBanner?: boolean;
   hideTelemetry?: boolean;
+  initialPageSize?: number;
+  startDate?: string;
+  endDate?: string;
+  onDateRangeChange?: (range: { startDate: string; endDate: string }) => void;
+  departmentFilter?: string;
+  categoryFilter?: string;
+  onClearDepartmentFilter?: () => void;
+  onClearCategoryFilter?: () => void;
+  title?: string;
+  subtitle?: string;
 }
 
 type SortField =
@@ -141,9 +128,9 @@ type SortField =
   | 'method'
   | 'status';
 type SortOrder = 'asc' | 'desc';
-type ViewPreset = 'all' | 'cash' | 'upi' | 'high_value' | 'pending';
+type ViewPreset = 'all' | 'cash' | 'upi';
 type TableDensity = 'compact' | 'normal' | 'relaxed';
-type SubViewTab = 'grid' | 'analytics_category' | 'analytics_dept' | 'analytics_payee';
+type SubViewTab = 'grid' | 'analytics_category' | 'analytics_dept' | 'analytics_payee' | 'report';
 
 type ColumnKey =
   | 'voucher_number'
@@ -166,28 +153,66 @@ const ALL_COLUMNS: { key: ColumnKey; label: string }[] = [
   { key: 'actions', label: 'Tools' },
 ];
 
-function downloadBlob(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
 export const VoucherTable: React.FC<VoucherTableProps> = ({
   vouchers,
   categories,
   departments,
   showActionBanner = true,
   hideTelemetry = false,
+  initialPageSize = 15,
+  startDate,
+  endDate,
+  onDateRangeChange,
+  departmentFilter,
+  categoryFilter,
+  onClearDepartmentFilter,
+  onClearCategoryFilter,
+  title,
+  subtitle,
 }) => {
   const { openDrawer, setActivePage } = useUIStore();
-  const { user } = useAuthStore();
+  const { user, can } = useAuthStore();
   const isDeveloper = user?.role_code === 'Developer' || user?.role_code === 'Super_Admin';
+  const isAdminOrDev = Boolean(
+    isDeveloper ||
+    isPrivilegedAdminRole(user?.role_code) ||
+    user?.role_code === 'Store_Manager' ||
+    user?.role_code?.toLowerCase() === 'store_manager' ||
+    can('can_view_all_branches') ||
+    can('can_view_audit_logs')
+  );
+
+  const [analyticsReportType, setAnalyticsReportType] = useState<'department' | 'category' | 'payee' | 'matrix'>('department');
+
+  // Sub-view tab
+  const [activeSubTab, setActiveSubTab] = useState<SubViewTab>('grid');
+
+  // Restrict macro analytics views to admin and dev only
+  useEffect(() => {
+    if (!isAdminOrDev && activeSubTab !== 'grid') {
+      setActiveSubTab('grid');
+    }
+  }, [isAdminOrDev, activeSubTab]);
+
+  // Date Range State (External sync + Internal fallback)
+  const [internalStartDate, setInternalStartDate] = useState<string>(startDate || '');
+  const [internalEndDate, setInternalEndDate] = useState<string>(endDate || '');
+
+  useEffect(() => {
+    if (startDate !== undefined) setInternalStartDate(startDate);
+    if (endDate !== undefined) setInternalEndDate(endDate);
+  }, [startDate, endDate]);
+
+  const effectiveStartDate = startDate !== undefined ? startDate : internalStartDate;
+  const effectiveEndDate = endDate !== undefined ? endDate : internalEndDate;
+
+  const handleDateRangeChange = (range: { startDate: string; endDate: string }) => {
+    setInternalStartDate(range.startDate);
+    setInternalEndDate(range.endDate);
+    if (onDateRangeChange) {
+      onDateRangeChange(range);
+    }
+  };
 
   // Search & Filter State
   const [search, setSearch] = useState('');
@@ -199,8 +224,20 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   const [minAmount, setMinAmount] = useState<string>('');
   const [maxAmount, setMaxAmount] = useState<string>('');
 
-  // Sub-view tab
-  const [activeSubTab, setActiveSubTab] = useState<SubViewTab>('grid');
+  // Sync external department/category filter if passed
+  useEffect(() => {
+    if (departmentFilter !== undefined) {
+      setSelectedDept(departmentFilter);
+      setCurrentPage(1);
+    }
+  }, [departmentFilter]);
+
+  useEffect(() => {
+    if (categoryFilter !== undefined) {
+      setSelectedCategory(categoryFilter);
+      setCurrentPage(1);
+    }
+  }, [categoryFilter]);
 
   // Sorting State
   const [sortField, setSortField] = useState<SortField>('date');
@@ -211,7 +248,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
 
   // Pro Developer Controls
-  const [tableDensity, setTableDensity] = useState<TableDensity>('normal');
+  const [tableDensity, setTableDensity] = useState<TableDensity>('compact');
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(
     new Set([
       'voucher_number',
@@ -227,13 +264,12 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   const [showTelemetryBar, setShowTelemetryBar] = useState(true);
   const [mobileViewMode, setMobileViewMode] = useState<'cards' | 'table'>('cards');
 
-  // Pagination State (Default 10 rows per page to reduce server load)
+  // Pagination State (Part-load default: 10 rows per page to prevent DOM bloat)
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageSize, setPageSize] = useState<number>(initialPageSize);
 
   // Popovers & Feedback State
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
   const [activeRowDropdownId, setActiveRowDropdownId] = useState<string | null>(null);
 
@@ -250,29 +286,23 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   const paymentModeSelectOptions = useMemo(() => [
     { value: 'ALL', label: 'All Payment Modes' },
     { value: 'Physical_Cash', label: 'Physical Cash' },
-    { value: 'Online_UPI', label: 'Bank / UPI' },
+    { value: 'Online_UPI', label: 'Online UPI' },
   ], []);
 
   const statusSelectOptions = useMemo(() => [
     { value: 'ALL', label: 'All Statuses' },
     { value: 'Approved', label: 'Approved' },
-    { value: 'Pending_Approval', label: 'Waiting Approval' },
     { value: 'Voided', label: 'Cancelled' },
   ], []);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
-  const filterRef = useRef<HTMLDivElement | null>(null);
-  const exportRef = useRef<HTMLDivElement | null>(null);
-  const columnPickerRef = useRef<HTMLDivElement | null>(null);
+    const columnPickerRef = useRef<HTMLDivElement | null>(null);
 
   // Global mutual exclusivity dropdown listener
   useEffect(() => {
     const handleGlobalDropdownOpen = (e: Event) => {
       const customEvt = e as CustomEvent<string>;
-      if (customEvt.detail !== 'voucher-export') {
-        setIsExportMenuOpen(false);
-      }
       if (customEvt.detail !== 'voucher-columns') {
         setIsColumnPickerOpen(false);
       }
@@ -287,9 +317,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   // Close popovers on outside click and ESC key
   useEffect(() => {
     function handleClickOutside(e: MouseEvent | TouchEvent) {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setIsExportMenuOpen(false);
-      }
       if (columnPickerRef.current && !columnPickerRef.current.contains(e.target as Node)) {
         setIsColumnPickerOpen(false);
       }
@@ -304,7 +331,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setIsFilterOpen(false);
-        setIsExportMenuOpen(false);
         setIsColumnPickerOpen(false);
         setActiveRowDropdownId(null);
       }
@@ -325,37 +351,13 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       setIsColumnPickerOpen(false);
     } else {
       setIsFilterOpen(false);
-      setIsExportMenuOpen(false);
       setActiveRowDropdownId(null);
       setIsColumnPickerOpen(true);
       openExclusivePopover('voucher-columns');
     }
   };
 
-  const handleToggleFilter = () => {
-    if (isFilterOpen) {
-      setIsFilterOpen(false);
-    } else {
-      setIsColumnPickerOpen(false);
-      setIsExportMenuOpen(false);
-      setActiveRowDropdownId(null);
-      setIsFilterOpen(true);
-      openExclusivePopover('voucher-filter');
-    }
-  };
-
-  const handleToggleExport = () => {
-    if (isExportMenuOpen) {
-      setIsExportMenuOpen(false);
-    } else {
-      setIsFilterOpen(false);
-      setIsColumnPickerOpen(false);
-      setActiveRowDropdownId(null);
-      setIsExportMenuOpen(true);
-      openExclusivePopover('voucher-export');
-    }
-  };
-
+  
   // Reset pagination on filter changes
   useEffect(() => {
     setCurrentPage(1);
@@ -402,10 +404,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       result = result.filter((v) => v.payment_method === 'Physical_Cash');
     } else if (activeView === 'upi') {
       result = result.filter((v) => v.payment_method === 'Online_UPI');
-    } else if (activeView === 'high_value') {
-      result = result.filter((v) => (Number(v.total_amount) || 0) >= 10000 || v.is_high_value);
-    } else if (activeView === 'pending') {
-      result = result.filter((v) => v.status === 'Pending_Approval');
     }
 
     // Search query
@@ -422,18 +420,45 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       );
     }
 
-    // Dropdown filters
+    // Dropdown filters (supports comma-separated multi-split categories and departments)
     if (selectedCategory !== 'ALL') {
-      result = result.filter((v) => v.category_name === selectedCategory);
+      result = result.filter((v) => {
+        if (!v.category_name) return false;
+        if (v.category_name === selectedCategory) return true;
+        return v.category_name
+          .split(',')
+          .map((c) => c.trim())
+          .includes(selectedCategory);
+      });
     }
     if (selectedDept !== 'ALL') {
-      result = result.filter((v) => v.department_name === selectedDept);
+      result = result.filter((v) => {
+        if (!v.department_name) return false;
+        if (v.department_name === selectedDept) return true;
+        return v.department_name
+          .split(',')
+          .map((d) => d.trim())
+          .includes(selectedDept);
+      });
     }
     if (selectedMode !== 'ALL') {
       result = result.filter((v) => v.payment_method === selectedMode);
     }
     if (selectedStatus !== 'ALL') {
       result = result.filter((v) => (v.status || 'Approved') === selectedStatus);
+    }
+
+    // Date Range filter
+    if (effectiveStartDate || effectiveEndDate) {
+      const cleanStart = normalizeDateToYMD(effectiveStartDate);
+      const cleanEnd = normalizeDateToYMD(effectiveEndDate);
+      result = result.filter((v) => {
+        const vDate = normalizeDateToYMD(v.payment_date || v.created_at);
+        if (!vDate) return false;
+        if (cleanStart && vDate < cleanStart) return false;
+        if (cleanEnd && vDate > cleanEnd) return false;
+        return true;
+      });
     }
 
     // Amount range filter
@@ -481,12 +506,27 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     maxAmount,
     sortField,
     sortOrder,
+    effectiveStartDate,
+    effectiveEndDate,
   ]);
+
+  // Active valid vouchers for financial telemetry (excludes Voided, Pending_Approval, and non-cash Advance_Settlement)
+  const validAnalyticsVouchers = useMemo(() => {
+    if (selectedStatus === 'Voided' || selectedStatus === 'Pending_Approval') {
+      return filteredVouchers;
+    }
+    return filteredVouchers.filter(
+      (v) =>
+        v.status !== 'Voided' &&
+        v.status !== 'Pending_Approval' &&
+        v.payment_type !== 'Advance_Settlement'
+    );
+  }, [filteredVouchers, selectedStatus]);
 
   // Telemetry Aggregates
   const telemetry = useMemo(() => {
-    const count = filteredVouchers.length;
-    const totalAmount = filteredVouchers.reduce(
+    const count = validAnalyticsVouchers.length;
+    const totalAmount = validAnalyticsVouchers.reduce(
       (sum, v) => sum + (Number(v.total_amount) || 0),
       0
     );
@@ -496,7 +536,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     let cashSum = 0;
     let upiSum = 0;
 
-    filteredVouchers.forEach((v) => {
+    validAnalyticsVouchers.forEach((v) => {
       const amt = Number(v.total_amount) || 0;
       if (amt < min) min = amt;
       if (amt > max) max = amt;
@@ -519,64 +559,128 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       cashPercent,
       upiPercent,
     };
-  }, [filteredVouchers]);
+  }, [validAnalyticsVouchers]);
 
   // Grouped Analytics Breakdowns
   const categoryAnalytics = useMemo(() => {
-    const map = new Map<string, { count: number; total: number }>();
-    filteredVouchers.forEach((v) => {
+    const map = new Map<string, { count: number; total: number; cashSum: number; upiSum: number }>();
+    validAnalyticsVouchers.forEach((v) => {
       const cat = v.category_name || 'Uncategorized';
       const amt = Number(v.total_amount) || 0;
-      const prev = map.get(cat) || { count: 0, total: 0 };
-      map.set(cat, { count: prev.count + 1, total: prev.total + amt });
+      const isCash = v.payment_method === 'Physical_Cash';
+      const prev = map.get(cat) || { count: 0, total: 0, cashSum: 0, upiSum: 0 };
+      map.set(cat, {
+        count: prev.count + 1,
+        total: prev.total + amt,
+        cashSum: prev.cashSum + (isCash ? amt : 0),
+        upiSum: prev.upiSum + (!isCash ? amt : 0),
+      });
     });
     return Array.from(map.entries())
       .map(([name, data]) => ({
         name,
         count: data.count,
-        total: data.total,
+        total: Math.round(data.total * 100) / 100,
+        cashSum: Math.round(data.cashSum * 100) / 100,
+        upiSum: Math.round(data.upiSum * 100) / 100,
+        avgBill: data.count > 0 ? Math.round(data.total / data.count) : 0,
         percentage: telemetry.totalAmount > 0 ? (data.total / telemetry.totalAmount) * 100 : 0,
       }))
       .sort((a, b) => b.total - a.total);
-  }, [filteredVouchers, telemetry.totalAmount]);
+  }, [validAnalyticsVouchers, telemetry.totalAmount]);
 
   const departmentAnalytics = useMemo(() => {
-    const map = new Map<string, { count: number; total: number }>();
-    filteredVouchers.forEach((v) => {
+    const map = new Map<string, { count: number; total: number; cashSum: number; upiSum: number }>();
+    validAnalyticsVouchers.forEach((v) => {
+      const isCash = v.payment_method === 'Physical_Cash';
+
+      // 1. Unpack Vendor Splits if available
+      if (Array.isArray(v.vendor_splits) && v.vendor_splits.length > 0) {
+        v.vendor_splits.forEach((vs: any) => {
+          const dept = vs.department_name || vs.departmentName || 'General Operations';
+          const amt = Number(vs.amount) || 0;
+          const prev = map.get(dept) || { count: 0, total: 0, cashSum: 0, upiSum: 0 };
+          map.set(dept, {
+            count: prev.count + 1,
+            total: prev.total + amt,
+            cashSum: prev.cashSum + (isCash ? amt : 0),
+            upiSum: prev.upiSum + (!isCash ? amt : 0),
+          });
+        });
+        return;
+      }
+
+      // 2. Unpack Comma-separated multi-department strings (from splits)
+      if (v.department_name && v.department_name.includes(',')) {
+        const depts = v.department_name.split(',').map((d) => d.trim()).filter(Boolean);
+        if (depts.length > 0) {
+          const splitAmt = (Number(v.total_amount) || 0) / depts.length;
+          depts.forEach((dept) => {
+            const prev = map.get(dept) || { count: 0, total: 0, cashSum: 0, upiSum: 0 };
+            map.set(dept, {
+              count: prev.count + 1,
+              total: prev.total + splitAmt,
+              cashSum: prev.cashSum + (isCash ? splitAmt : 0),
+              upiSum: prev.upiSum + (!isCash ? splitAmt : 0),
+            });
+          });
+          return;
+        }
+      }
+
+      // 3. Standard single department voucher
       const dept = v.department_name || 'General Operations';
       const amt = Number(v.total_amount) || 0;
-      const prev = map.get(dept) || { count: 0, total: 0 };
-      map.set(dept, { count: prev.count + 1, total: prev.total + amt });
+      const prev = map.get(dept) || { count: 0, total: 0, cashSum: 0, upiSum: 0 };
+      map.set(dept, {
+        count: prev.count + 1,
+        total: prev.total + amt,
+        cashSum: prev.cashSum + (isCash ? amt : 0),
+        upiSum: prev.upiSum + (!isCash ? amt : 0),
+      });
     });
     return Array.from(map.entries())
       .map(([name, data]) => ({
         name,
         count: data.count,
-        total: data.total,
+        total: Math.round(data.total * 100) / 100,
+        cashSum: Math.round(data.cashSum * 100) / 100,
+        upiSum: Math.round(data.upiSum * 100) / 100,
+        avgBill: data.count > 0 ? Math.round(data.total / data.count) : 0,
         percentage: telemetry.totalAmount > 0 ? (data.total / telemetry.totalAmount) * 100 : 0,
       }))
       .sort((a, b) => b.total - a.total);
-  }, [filteredVouchers, telemetry.totalAmount]);
+  }, [validAnalyticsVouchers, telemetry.totalAmount]);
 
   const payeeAnalytics = useMemo(() => {
-    const map = new Map<string, { count: number; total: number; category: string }>();
-    filteredVouchers.forEach((v) => {
+    const map = new Map<string, { count: number; total: number; cashSum: number; upiSum: number; category: string }>();
+    validAnalyticsVouchers.forEach((v) => {
       const name = v.recipient_name || 'Cash Disbursal';
       const amt = Number(v.total_amount) || 0;
-      const prev = map.get(name) || { count: 0, total: 0, category: v.category_name || 'General' };
-      map.set(name, { count: prev.count + 1, total: prev.total + amt, category: prev.category });
+      const isCash = v.payment_method === 'Physical_Cash';
+      const prev = map.get(name) || { count: 0, total: 0, cashSum: 0, upiSum: 0, category: v.category_name || 'General' };
+      map.set(name, {
+        count: prev.count + 1,
+        total: prev.total + amt,
+        cashSum: prev.cashSum + (isCash ? amt : 0),
+        upiSum: prev.upiSum + (!isCash ? amt : 0),
+        category: prev.category,
+      });
     });
     return Array.from(map.entries())
       .map(([name, data]) => ({
         name,
         category: data.category,
         count: data.count,
-        total: data.total,
+        total: Math.round(data.total * 100) / 100,
+        cashSum: Math.round(data.cashSum * 100) / 100,
+        upiSum: Math.round(data.upiSum * 100) / 100,
+        avgBill: data.count > 0 ? Math.round(data.total / data.count) : 0,
         percentage: telemetry.totalAmount > 0 ? (data.total / telemetry.totalAmount) * 100 : 0,
       }))
       .sort((a, b) => b.total - a.total)
-      .slice(0, 25);
-  }, [filteredVouchers, telemetry.totalAmount]);
+      .slice(0, 50);
+  }, [validAnalyticsVouchers, telemetry.totalAmount]);
 
   // Paginated records
   const totalPages = Math.max(1, Math.ceil(filteredVouchers.length / pageSize));
@@ -596,7 +700,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     const yesterdayStr = formatDate(yesterday, 'yyyy-MM-dd');
 
     paginatedVouchers.forEach((v) => {
-      const rawDate = v.payment_date || (v.created_at ? v.created_at.slice(0, 10) : '');
+      const rawDate = normalizeDateToYMD(v.payment_date || v.created_at);
       let label = rawDate ? formatDate(rawDate, 'dd MMMM yyyy') : 'Recent';
       if (rawDate === todayStr) label = 'TODAY';
       else if (rawDate === yesterdayStr) label = 'YESTERDAY';
@@ -634,54 +738,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     setSelectedIds(new Set());
   };
 
-  // Export handlers
-  const getExportData = () => {
-    return selectedIds.size > 0
-      ? filteredVouchers.filter((v) => selectedIds.has(v.id))
-      : filteredVouchers;
-  };
-
-  const handleExportCSV = () => {
-    const list = getExportData();
-    const csvContent =
-      'Date,Voucher Number,Branch,Paid To,Category,Department,Payment Mode,Amount,Remarks,Status\n' +
-      list
-        .map(
-          (v) =>
-            `"${v.payment_date}","${v.voucher_number}","${v.branch_code}","${v.recipient_name}","${v.category_name}","${v.department_name}","${v.payment_method}","${v.total_amount}","${(v.remarks || '').replace(/"/g, '""')}","${v.status || 'Approved'}"`
-        )
-        .join('\n');
-    downloadBlob(
-      `Asopalav_Expenses_${new Date().toISOString().slice(0, 10)}.csv`,
-      csvContent,
-      'text/csv;charset=utf-8;'
-    );
-    setIsExportMenuOpen(false);
-  };
-
-  const handleExportJSON = () => {
-    const list = getExportData();
-    const jsonContent = JSON.stringify(list, null, 2);
-    downloadBlob(
-      `Asopalav_Expenses_${new Date().toISOString().slice(0, 10)}.json`,
-      jsonContent,
-      'application/json;charset=utf-8;'
-    );
-    setIsExportMenuOpen(false);
-  };
-
-  const handleExportTallyCSV = () => {
-    const list = getExportData();
-    const csvDataUri = erpService.generateTallyExportCSV(list);
-    const cleanCsv = csvDataUri.replace(/^data:text\/csv;charset=utf-8,/, '');
-    downloadBlob(
-      `Asopalav_Tally_Prime_Export_${new Date().toISOString().slice(0, 10)}.csv`,
-      cleanCsv,
-      'text/csv;charset=utf-8;'
-    );
-    setIsExportMenuOpen(false);
-  };
-
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -698,7 +754,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
 
       if (e.key === 'Escape') {
         if (isFilterOpen) setIsFilterOpen(false);
-        if (isExportMenuOpen) setIsExportMenuOpen(false);
         if (isColumnPickerOpen) setIsColumnPickerOpen(false);
         if (activeRowDropdownId) setActiveRowDropdownId(null);
         if (search) setSearch('');
@@ -722,9 +777,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
           e.preventDefault();
           const targetVoucher = paginatedVouchers[focusedIndex];
           if (targetVoucher) openDrawer(targetVoucher);
-        } else if (e.key === 'e' || e.key === 'E') {
-          e.preventDefault();
-          setIsExportMenuOpen((prev) => !prev);
         }
       }
     };
@@ -733,7 +785,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     isFilterOpen,
-    isExportMenuOpen,
     isColumnPickerOpen,
     activeRowDropdownId,
     search,
@@ -750,7 +801,78 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     (selectedStatus !== 'ALL' ? 1 : 0) +
     (minAmount !== '' ? 1 : 0) +
     (maxAmount !== '' ? 1 : 0) +
-    (activeView !== 'all' ? 1 : 0);
+    (activeView !== 'all' ? 1 : 0) +
+    (effectiveStartDate || effectiveEndDate ? 1 : 0);
+
+  const handleResetAllFilters = () => {
+    triggerHaptic('light');
+    setSelectedCategory('ALL');
+    setSelectedDept('ALL');
+    if (onClearDepartmentFilter) onClearDepartmentFilter();
+    if (onClearCategoryFilter) onClearCategoryFilter();
+    setSelectedMode('ALL');
+    setSelectedStatus('ALL');
+    setMinAmount('');
+    setMaxAmount('');
+    setActiveView('all');
+    setSearch('');
+    setInternalStartDate('');
+    setInternalEndDate('');
+    if (onDateRangeChange) {
+      onDateRangeChange({ startDate: '', endDate: '' });
+    }
+  };
+
+  const handleExportCSV = () => {
+    triggerHaptic('success');
+    const headers = ['Voucher No', 'Date', 'Payee', 'Category', 'Department', 'Payment Mode', 'Gross Amount (INR)', 'Status', 'Remarks'];
+    const rows = filteredVouchers.map((v) => [
+      v.voucher_number,
+      v.payment_date || (v.created_at ? v.created_at.slice(0, 10) : ''),
+      `"${(v.recipient_name || '').replace(/"/g, '""')}"`,
+      `"${(v.category_name || '').replace(/"/g, '""')}"`,
+      `"${(v.department_name || '').replace(/"/g, '""')}"`,
+      v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
+      v.total_amount,
+      v.status || 'Approved',
+      `"${(v.remarks || '').replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Asopalav_Expenses_${effectiveStartDate || 'All'}_to_${effectiveEndDate || 'Present'}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast({ type: 'success', title: 'Export Generated', message: `Exported ${filteredVouchers.length} vouchers to CSV.` });
+  };
+
+  const handleExportSelectedCSV = () => {
+    triggerHaptic('success');
+    const selectedList = vouchers.filter((v) => selectedIds.has(v.id));
+    const headers = ['Voucher No', 'Date', 'Payee', 'Category', 'Department', 'Payment Mode', 'Gross Amount (INR)', 'Status', 'Remarks'];
+    const rows = selectedList.map((v) => [
+      v.voucher_number,
+      v.payment_date || (v.created_at ? v.created_at.slice(0, 10) : ''),
+      `"${(v.recipient_name || '').replace(/"/g, '""')}"`,
+      `"${(v.category_name || '').replace(/"/g, '""')}"`,
+      `"${(v.department_name || '').replace(/"/g, '""')}"`,
+      v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
+      v.total_amount,
+      v.status || 'Approved',
+      `"${(v.remarks || '').replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Asopalav_Selected_${selectedIds.size}_Vouchers.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast({ type: 'success', title: 'Batch Exported', message: `Exported ${selectedIds.size} selected vouchers.` });
+  };
 
   const isAllCurrentPageSelected =
     paginatedVouchers.length > 0 && paginatedVouchers.every((v) => selectedIds.has(v.id));
@@ -827,58 +949,34 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
               </div>
             </div>
 
-            {/* Sub-View Mode Switcher */}
-            <div className="inline-flex rounded-[8px] p-0.5 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08]">
-              {[
-                { id: 'grid', label: 'Ledger', icon: Layers },
-                { id: 'analytics_category', label: 'By Category', icon: BarChart3 },
-                { id: 'analytics_dept', label: 'By Dept', icon: Building2 },
-                { id: 'analytics_payee', label: 'Top Payees', icon: Users },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeSubTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveSubTab(tab.id as SubViewTab)}
-                    className={cn(
-                      'flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-xs font-sans transition-all cursor-pointer font-medium ios-press',
-                      isActive
-                        ? 'bg-white dark:bg-[#282828] text-slate-900 dark:text-white font-semibold shadow-xs border border-slate-200/80 dark:border-[#383838]'
-                        : 'text-slate-500 dark:text-[#8e8e93] hover:text-slate-900 dark:hover:text-white border border-transparent'
-                    )}
-                  >
-                    <Icon className={cn('w-3 h-3', isActive ? 'text-[#3ecf8e]' : 'opacity-70')} />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
-          {/* Cash vs UPI Ratio Bar */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 dark:text-[#8e8e93]">
-              <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-semibold">
-                <Banknote className="w-3 h-3" />
-                Cash: {telemetry.cashPercent}% ({formatINR(telemetry.cashSum)})
+          {/* Minimalist Cash vs UPI Split Ratio Bar */}
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-zinc-400 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf8e] shrink-0" />
+                <span>Cash:</span>
+                <span className="text-slate-900 dark:text-zinc-200 font-semibold">{telemetry.cashPercent}%</span>
+                <span className="text-slate-400 dark:text-[#707070] font-normal">({formatINR(telemetry.cashSum)})</span>
               </span>
-              <span className="flex items-center gap-1 text-sky-600 dark:text-sky-400 font-semibold">
-                <Smartphone className="w-3 h-3" />
-                UPI: {telemetry.upiPercent}% ({formatINR(telemetry.upiSum)})
+              <span className="inline-flex items-center gap-1.5 text-slate-600 dark:text-zinc-400 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-[#555555] shrink-0" />
+                <span>UPI / Online:</span>
+                <span className="text-slate-900 dark:text-zinc-200 font-semibold">{telemetry.upiPercent}%</span>
+                <span className="text-slate-400 dark:text-[#707070] font-normal">({formatINR(telemetry.upiSum)})</span>
               </span>
             </div>
-            <div className="w-full h-2 rounded-full overflow-hidden bg-black/[0.04] dark:bg-white/[0.06] flex border border-black/[0.04] dark:border-white/[0.06]">
+            <div className="w-full h-1.5 rounded-full overflow-hidden bg-slate-100 dark:bg-[#202020] flex border border-slate-200/60 dark:border-[#282828]">
               <div
-                className="bg-amber-500 transition-all duration-300"
+                className="bg-[#3ecf8e] transition-all duration-300 rounded-l-full"
                 style={{ width: `${telemetry.cashPercent}%` }}
-                title={`Cash: ${telemetry.cashPercent}%`}
+                title={`Cash: ${telemetry.cashPercent}% (${formatINR(telemetry.cashSum)})`}
               />
               <div
-                className="bg-sky-500 transition-all duration-300"
+                className="bg-slate-300 dark:bg-[#444444] transition-all duration-300 rounded-r-full"
                 style={{ width: `${telemetry.upiPercent}%` }}
-                title={`UPI: ${telemetry.upiPercent}%`}
+                title={`UPI: ${telemetry.upiPercent}% (${formatINR(telemetry.upiSum)})`}
               />
             </div>
           </div>
@@ -886,60 +984,178 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* 2.5 VIEW MODE TABS (Apple / Google Pro Data Table Hierarchy)               */}
+      {/* ========================================================================= */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-slate-200 dark:border-[#282828]">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('selection');
+              setActiveSubTab('grid');
+            }}
+            className={cn(
+              'px-3 py-1.5 rounded-[6px] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer',
+              activeSubTab === 'grid'
+                ? 'bg-[#3ecf8e]/15 text-[#171717] dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/30'
+                : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+            )}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Data Grid</span>
+            <span className="font-mono tabular-nums text-[10px] opacity-75">({filteredVouchers.length})</span>
+          </button>
+
+          {isAdminOrDev && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setActiveSubTab('analytics_dept');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer',
+                  activeSubTab === 'analytics_category' || activeSubTab === 'analytics_dept' || activeSubTab === 'analytics_payee'
+                    ? 'bg-[#3ecf8e]/15 text-[#171717] dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/30'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Department &amp; Category Reports</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setActiveSubTab('report');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer',
+                  activeSubTab === 'report'
+                    ? 'bg-[#3ecf8e]/15 text-[#171717] dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/30'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Audit Report</span>
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Pro Quick Actions */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] hover:bg-slate-50 dark:hover:bg-[#202020] text-xs font-medium font-sans text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            title="Export filtered records to CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <span>Export CSV</span>
+          </button>
+
+          {showActionBanner && (
+            <button
+              type="button"
+              onClick={() => setActivePage('new-voucher')}
+              className="px-3 py-1 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer font-sans shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Record Expense</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
       {/* 3. ENTERPRISE ADVANCED TOOLBAR (Controls, Filters, Pro Dev Tools)           */}
       {/* ========================================================================= */}
-      <div className="relative z-30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] shadow-xs">
-        {/* Left: Sub-View Mode Switcher */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
-          <div className="inline-flex rounded-[8px] p-0.5 bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] shrink-0">
+      <div className="relative z-30 flex flex-col md:flex-row md:items-center justify-between gap-2.5 p-2.5 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] shadow-xs">
+        {/* Left: Quick View Presets Chips & Part-Load Rows (10 to 100) */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0">
             {[
-              { id: 'grid', label: 'Ledger', icon: Layers },
-              { id: 'analytics_category', label: 'By Category', icon: PieChart },
-              { id: 'analytics_dept', label: 'By Dept', icon: Building2 },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeSubTab === tab.id;
+              { id: 'all', label: 'All' },
+              { id: 'cash', label: 'Cash Only' },
+              { id: 'upi', label: 'UPI Only' },
+            ].map((preset) => {
+              const isSel = activeView === preset.id;
               return (
                 <button
-                  key={tab.id}
+                  key={preset.id}
                   type="button"
-                  onClick={() => setActiveSubTab(tab.id as SubViewTab)}
+                  onClick={() => {
+                    triggerHaptic('selection');
+                    setActiveView(preset.id as ViewPreset);
+                  }}
                   className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-xs font-sans transition-all cursor-pointer font-medium',
-                    isActive
-                      ? 'bg-white dark:bg-[#282828] text-slate-900 dark:text-white font-semibold shadow-xs border border-slate-200/80 dark:border-[#383838]'
-                      : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white border border-transparent'
+                    'px-2.5 py-1 rounded-[6px] text-xs font-medium font-sans whitespace-nowrap transition-colors cursor-pointer',
+                    isSel
+                      ? 'bg-[#3ecf8e]/15 text-[#171717] dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/30'
+                      : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
                   )}
                 >
-                  <Icon
-                    className={cn('w-3 h-3', isActive ? 'text-primary' : 'opacity-70')}
-                  />
-                  <span>{tab.label}</span>
+                  {preset.label}
                 </button>
               );
             })}
           </div>
+
+          {/* Part-Load Rows Select Dropdown (Image 1 ergonomics: 10, 15, 25, 50, 100) */}
+          <div className="flex items-center gap-1.5 font-mono text-xs text-slate-600 dark:text-[#888]">
+            <span className="text-[11px] font-sans">Rows:</span>
+            <div className="relative inline-flex items-center">
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  triggerHaptic('light');
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="appearance-none h-7 pl-2.5 pr-6 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#18181a] text-slate-900 dark:text-white font-mono text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#3ecf8e] shadow-2xs"
+                title="Select rows per page"
+              >
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 dark:text-[#888] absolute right-1.5 pointer-events-none" />
+            </div>
+          </div>
         </div>
 
-        {/* Right: Search, Multi-Filter, Column Picker, Pro Export Menu, Action CTA */}
+        {/* Right: DateRangePicker, Search, Multi-Filter, Column Picker, Density */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Integrated DateRangePicker */}
+          <DateRangePicker
+            startDate={effectiveStartDate}
+            endDate={effectiveEndDate}
+            onChange={handleDateRangeChange}
+            size="sm"
+          />
+
           {/* Search Box */}
-          <div className="relative flex-1 sm:w-52">
-            <Search className="w-3.5 h-3.5 text-slate-400 dark:text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <div className="relative flex-1 sm:w-48 min-w-[140px]">
+            <Search className="w-3.5 h-3.5 text-slate-400 dark:text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               ref={searchInputRef}
               type="text"
               aria-label="Search expense vouchers"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search bills..."
-              className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[6px] pl-9 pr-7 h-10 min-h-[40px] text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 w-full transition-all font-sans shadow-2xs"
+              placeholder="Search bills (/)..."
+              className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[6px] pl-8 pr-6 h-8 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 w-full transition-all font-sans shadow-2xs"
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -952,7 +1168,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
               type="button"
               onClick={() => setIsFilterOpen((prev) => !prev)}
               className={cn(
-                'flex items-center gap-1.5 px-3.5 h-10 min-h-[40px] rounded-[6px] text-xs font-semibold font-sans border transition-all cursor-pointer shadow-2xs',
+                'flex items-center gap-1.5 px-2.5 h-8 rounded-[6px] text-xs font-medium font-sans border transition-all cursor-pointer shadow-2xs',
                 isFilterOpen || activeFilterCount > 0
                   ? 'bg-[#3ecf8e]/15 text-emerald-800 dark:text-[#3ecf8e] border-[#3ecf8e]/40 font-semibold'
                   : 'bg-white dark:bg-[#181818] hover:bg-slate-50 dark:hover:bg-[#202020] text-slate-900 dark:text-zinc-200 border-slate-200 dark:border-[#282828]'
@@ -968,16 +1184,42 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
             </button>
           </div>
 
+          {/* Density Switcher */}
+          <div className="hidden sm:flex items-center rounded-[6px] border border-slate-200 dark:border-[#282828] p-0.5 bg-white dark:bg-[#181818]">
+            <button
+              type="button"
+              onClick={() => setTableDensity('compact')}
+              className={cn(
+                'px-2 py-0.5 text-[11px] rounded-[4px] font-medium font-sans transition-colors cursor-pointer',
+                tableDensity === 'compact' ? 'bg-[#3ecf8e] text-[#171717]' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
+              )}
+              title="Compact Density"
+            >
+              Compact
+            </button>
+            <button
+              type="button"
+              onClick={() => setTableDensity('normal')}
+              className={cn(
+                'px-2 py-0.5 text-[11px] rounded-[4px] font-medium font-sans transition-colors cursor-pointer',
+                tableDensity === 'normal' ? 'bg-[#3ecf8e] text-[#171717]' : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white'
+              )}
+              title="Normal Density"
+            >
+              Normal
+            </button>
+          </div>
+
           {/* Column Picker Popover */}
           <div className="hidden sm:block relative" ref={columnPickerRef}>
             <button
               type="button"
               onClick={handleToggleColumnPicker}
               title="Manage Columns"
-              className="flex items-center gap-1.5 px-3 h-10 min-h-[40px] rounded-[6px] bg-white dark:bg-[#181818] hover:bg-slate-50 dark:hover:bg-[#202020] text-xs font-semibold font-sans text-slate-900 dark:text-white border border-slate-200 dark:border-[#282828] cursor-pointer shadow-2xs"
+              className="flex items-center gap-1.5 px-2.5 h-8 rounded-[6px] bg-white dark:bg-[#181818] hover:bg-slate-50 dark:hover:bg-[#202020] text-xs font-medium font-sans text-slate-900 dark:text-white border border-slate-200 dark:border-[#282828] cursor-pointer shadow-2xs"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 dark:text-zinc-400" />
-              <span>Columns</span>
+              <span>Cols</span>
             </button>
 
             {isColumnPickerOpen && (
@@ -1010,79 +1252,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
               </div>
             )}
           </div>
-
-          {/* Pro Developer & Data Export Menu (Desktop Only) */}
-          <div className="hidden lg:block relative" ref={exportRef}>
-            <button
-              type="button"
-              onClick={handleToggleExport}
-              className="flex items-center gap-1.5 px-3 h-10 min-h-[40px] rounded-[6px] bg-white dark:bg-[#181818] hover:bg-slate-50 dark:hover:bg-[#202020] text-xs font-medium text-slate-900 dark:text-white border border-slate-200 dark:border-[#282828] transition-colors cursor-pointer font-sans shadow-2xs"
-            >
-              <Download className="w-3.5 h-3.5 text-primary" />
-              <span>Export</span>
-              <ChevronDown className="w-3 h-3 text-slate-400 dark:text-zinc-400" />
-            </button>
-
-            {isExportMenuOpen && (
-              <div className="absolute right-0 mt-1.5 w-60 rounded-[6px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] shadow-2xl p-1 z-50 space-y-0.5 text-xs font-sans animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-2.5 py-1 text-[10px] font-mono text-slate-400 dark:text-zinc-400 uppercase border-b border-slate-200 dark:border-[#282828]">
-                  Export {selectedIds.size > 0 ? `Selected (${selectedIds.size})` : `All (${filteredVouchers.length})`}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleExportCSV}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-[4px] hover:bg-slate-100 dark:hover:bg-[#222222] text-slate-900 dark:text-white cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-[#3ecf8e]" />
-                    <span>Export CSV Spreadsheet</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-slate-400 dark:text-zinc-400">.csv</span>
-                </button>
-
-                {isDeveloper && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleExportJSON}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-[4px] hover:bg-slate-100 dark:hover:bg-[#222222] text-slate-900 dark:text-white cursor-pointer"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Code className="w-4 h-4 text-sky-500" />
-                        <span>Export JSON Dataset</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-400 dark:text-zinc-400">.json</span>
-                    </button>
-                  </>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleExportTallyCSV}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-[4px] hover:bg-slate-100 dark:hover:bg-[#222222] text-slate-900 dark:text-white cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-amber-500" />
-                    <span>Export Tally Prime (CSV)</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-slate-400 dark:text-zinc-400">.csv</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Primary Create New Voucher CTA (Desktop Only) */}
-          {showActionBanner && (
-            <button
-              type="button"
-              onClick={() => setActivePage('new-voucher')}
-              className="hidden lg:flex items-center gap-1.5 px-4 h-10 min-h-[40px] rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] text-xs font-semibold transition-colors cursor-pointer font-sans shadow-xs shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>Record Expense</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -1369,7 +1538,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                 {[
                   { id: 'ALL', label: 'All Modes' },
                   { id: 'Physical_Cash', label: 'Cash' },
-                  { id: 'Online_UPI', label: 'Bank / UPI' },
+                  { id: 'Online_UPI', label: 'Online UPI' },
                 ].map((m) => {
                   const isSel = selectedMode === m.id;
                   return (
@@ -1400,11 +1569,10 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
                 <span>Approval Status</span>
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {[
                   { id: 'ALL', label: 'All' },
                   { id: 'Approved', label: 'Approved' },
-                  { id: 'Pending_Approval', label: 'Pending' },
                 ].map((st) => {
                   const isSel = selectedStatus === st.id;
                   return (
@@ -1447,6 +1615,110 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* 3.2 ACTIVE FILTER CHIPS RIBBON (Instant 1-Click Clear & Visibility)        */}
+      {/* ========================================================================= */}
+      {(activeFilterCount > 0 || search.trim() !== '') && (
+        <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-[8px] bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#242424] text-xs animate-in fade-in duration-100">
+          <span className="text-[11px] font-medium text-slate-500 dark:text-zinc-400 font-sans mr-1">Active:</span>
+
+          {search.trim() && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-mono text-[11px]">
+              Search: "{search}"
+              <button type="button" onClick={() => setSearch('')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {activeView !== 'all' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-sans text-[11px]">
+              Preset: {activeView.toUpperCase()}
+              <button type="button" onClick={() => setActiveView('all')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {selectedCategory !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-sans text-[11px]">
+              Cat: {selectedCategory}
+              <button type="button" onClick={() => setSelectedCategory('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {selectedDept !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-sans text-[11px]">
+              Dept: {selectedDept}
+              <button type="button" onClick={() => setSelectedDept('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {selectedMode !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-sans text-[11px]">
+              Mode: {selectedMode === 'Physical_Cash' ? 'Cash' : 'UPI'}
+              <button type="button" onClick={() => setSelectedMode('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {selectedStatus !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-sans text-[11px]">
+              Status: {selectedStatus}
+              <button type="button" onClick={() => setSelectedStatus('ALL')} className="hover:text-rose-500 cursor-pointer">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {(minAmount !== '' || maxAmount !== '') && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-mono text-[11px]">
+              ₹{minAmount || '0'} - ₹{maxAmount || '∞'}
+              <button
+                type="button"
+                onClick={() => {
+                  setMinAmount('');
+                  setMaxAmount('');
+                }}
+                className="hover:text-rose-500 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          {(effectiveStartDate || effectiveEndDate) && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-800 dark:text-[#3ecf8e] border border-[#3ecf8e]/20 font-mono text-[11px]">
+              Date: {effectiveStartDate || 'Start'} &rarr; {effectiveEndDate || 'End'}
+              <button
+                type="button"
+                onClick={() => {
+                  setInternalStartDate('');
+                  setInternalEndDate('');
+                  if (onDateRangeChange) onDateRangeChange({ startDate: '', endDate: '' });
+                }}
+                className="hover:text-rose-500 cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={handleResetAllFilters}
+            className="ml-auto text-[11px] font-sans font-medium text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer hover:underline"
+          >
+            Clear All
+          </button>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* 4. FLOATING BATCH SELECTION DOCK (When Rows Selected)                    */}
       {/* ========================================================================= */}
       {selectedIds.size > 0 && (
@@ -1463,24 +1735,16 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleExportCSV}
-              className="px-3 py-1.5 rounded-[6px] bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-[#2e2e2e] text-xs font-sans text-slate-900 dark:text-white hover:border-primary transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              onClick={handleExportSelectedCSV}
+              className="px-2.5 py-1.5 rounded-[6px] text-xs font-sans bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
-              <Download className="w-3.5 h-3.5 text-primary" />
-              <span>Export CSV</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleExportJSON}
-              className="px-3 py-1.5 rounded-[6px] bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-[#2e2e2e] text-xs font-sans text-slate-900 dark:text-white hover:border-primary transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <Code className="w-3.5 h-3.5 text-sky-500" />
-              <span>Export JSON</span>
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Selected CSV</span>
             </button>
             <button
               type="button"
               onClick={handleClearSelection}
-              className="px-2.5 py-1.5 rounded-[6px] text-xs font-sans text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+              className="px-2.5 py-1.5 rounded-[6px] text-xs font-sans text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer border border-slate-200 dark:border-[#2e2e2e]"
             >
               Deselect All
             </button>
@@ -1489,7 +1753,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 5. ACTIVE SUB-VIEW CONTENT (Grid vs Analytics Breakdowns)                */}
+      {/* 5. ACTIVE SUB-VIEW CONTENT (Grid vs Analytics Breakdowns vs Report View)  */}
       {/* ========================================================================= */}
       {activeSubTab === 'grid' && (
         <div className="rounded-[8px] border border-slate-200/80 dark:border-[#242424] bg-white dark:bg-[#161616] overflow-hidden shadow-2xs">
@@ -1528,7 +1792,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <h4 className="font-semibold text-xs text-slate-900 dark:text-white truncate">
-                                {v.recipient_name || 'General Expense'}
+                                {v.recipient_name || '—'}
                               </h4>
                               {getRelativeDateBadge(v.payment_date) && (
                                 <span className="px-1.5 py-0.2 rounded-[4px] text-[9px] font-mono font-semibold uppercase bg-slate-100 dark:bg-[#252528] text-slate-600 dark:text-zinc-300 border border-slate-200/80 dark:border-[#333]">
@@ -1539,7 +1803,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                             <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-500 dark:text-zinc-400 truncate font-sans">
                               <span>{v.category_name}</span>
                               <span>•</span>
-                              <span className="font-mono text-[10px]">{formatDate(v.payment_date, 'HH:mm')}</span>
+                              <span className="font-mono text-[10px]">{formatDate(v.created_at || v.payment_date, 'HH:mm')}</span>
                             </div>
                             <div className="flex items-center gap-1.5 mt-1">
                               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-[4px] bg-slate-100 dark:bg-[#222222] text-slate-600 dark:text-zinc-300 font-mono text-[10px] font-medium border border-slate-200/80 dark:border-[#2a2a2a]">
@@ -1551,7 +1815,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                                 </span>
                               )}
                               <span className="text-[10px] font-mono text-slate-400 dark:text-zinc-500">
-                                #{v.voucher_number}
+                                #{formatVoucherNumber(v.voucher_number)}
                               </span>
                             </div>
                           </div>
@@ -1763,7 +2027,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                       >
                         <button
                           type="button"
-                          aria-label={`Select receipt ${v.voucher_number}`}
+                          aria-label={`Select receipt ${formatVoucherNumber(v.voucher_number)}`}
                           className="cursor-pointer text-slate-400 group-hover:text-slate-700 dark:group-hover:text-white inline-flex items-center justify-center"
                         >
                           {isSelected ? (
@@ -1783,7 +2047,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                           )}
                         >
                           <div className="flex items-center">
-                            <span>{v.voucher_number}</span>
+                            <span>{formatVoucherNumber(v.voucher_number)}</span>
                           </div>
                         </td>
                       )}
@@ -1818,7 +2082,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                                   openDrawer(v);
                                 }}
                                 title="View Attached Bill Photo"
-                                aria-label={`View bill photo for ${v.voucher_number}`}
+                                aria-label={`View bill photo for ${formatVoucherNumber(v.voucher_number)}`}
                                 className="p-1 rounded text-emerald-600 dark:text-primary hover:bg-emerald-50 dark:hover:bg-primary/10 transition-colors ml-1"
                               >
                                 <Eye className="w-3.5 h-3.5" />
@@ -1865,13 +2129,13 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                           <div className="flex items-center gap-1.5 font-medium">
                             {v.payment_method === 'Physical_Cash' ? (
                               <>
-                                <Banknote className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 shrink-0" />
+                                <Coins className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 shrink-0" />
                                 <span className="text-slate-800 dark:text-gray-300">Physical Cash</span>
                               </>
                             ) : (
                               <>
                                 <CreditCard className="w-3.5 h-3.5 text-sky-600 dark:text-sky-500 shrink-0" />
-                                <span className="text-slate-800 dark:text-gray-300">Bank / UPI</span>
+                                <span className="text-slate-800 dark:text-gray-300">Online UPI</span>
                               </>
                             )}
                           </div>
@@ -1886,7 +2150,9 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                             densityStyles.cell
                           )}
                         >
-                          {formatINR(v.total_amount)}
+                          <div className="flex items-center justify-end">
+                            <span>{formatINR(v.total_amount)}</span>
+                          </div>
                         </td>
                       )}
 
@@ -1955,7 +2221,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
           {/* ========================================================================= */}
           <div className="bg-slate-50 dark:bg-[#171717] border-t border-slate-200 dark:border-[#2e2e2e] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-sans">
             {/* Left: Record Count & Page Size Selector */}
-            <div className="flex items-center gap-3 text-slate-600 dark:text-gray-400 font-mono">
+            <div className="flex flex-wrap items-center gap-3 text-slate-600 dark:text-gray-400 font-mono">
               <span>
                 Showing{' '}
                 <strong className="text-slate-900 dark:text-white font-semibold">
@@ -1970,24 +2236,26 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                 records
               </span>
 
-              <div className="flex items-center gap-1.5 ml-2 w-24">
-                <span>Rows:</span>
-                <div className="flex-1">
-                  <SearchableSelect
-                    size="sm"
-                    placement="top"
-                    options={[
-                      { value: '10', label: '10' },
-                      { value: '15', label: '15' },
-                      { value: '25', label: '25' },
-                      { value: '50', label: '50' },
-                      { value: '100', label: '100' },
-                    ]}
-                    value={String(pageSize)}
-                    onChange={(val) => setPageSize(Number(val))}
-                    allowCustom={false}
-                    popupClassName="min-w-[76px]"
-                  />
+              <div className="flex items-center gap-1.5 font-mono text-xs text-slate-600 dark:text-[#888]">
+                <span className="text-[11px] font-sans">Rows:</span>
+                <div className="relative inline-flex items-center">
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      triggerHaptic('light');
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="appearance-none h-7 pl-2.5 pr-6 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#18181a] text-slate-900 dark:text-white font-mono text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#3ecf8e] shadow-2xs"
+                    title="Select rows per page"
+                  >
+                    <option value={10}>10</option>
+                    <option value={15}>15</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 dark:text-[#888] absolute right-1.5 pointer-events-none" />
                 </div>
               </div>
             </div>
@@ -2023,305 +2291,630 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 7. GROUPED ANALYTICS BREAKDOWN: BY CATEGORY                              */}
+      {/* 5.2 ADVANCED TABLE REPORTS (Department-wise, Category-wise, Top Payees)     */}
       {/* ========================================================================= */}
-      {activeSubTab === 'analytics_category' && (
-        <div className="rounded-[12px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] overflow-hidden shadow-xs">
-          <div className="p-3 bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-primary" />
-              <h3 className="text-xs font-semibold text-slate-900 dark:text-white font-sans">
-                Expenses Aggregated by Category ({categoryAnalytics.length} categories)
-              </h3>
+      {(activeSubTab === 'analytics_category' || activeSubTab === 'analytics_dept' || activeSubTab === 'analytics_payee') && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          {/* Sub-navigation Switcher: Department Table vs Category Table vs Payee Table vs Visual Matrix */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] shadow-xs">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-sans">
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setAnalyticsReportType('department');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] font-medium transition-colors flex items-center gap-2 cursor-pointer',
+                  analyticsReportType === 'department'
+                    ? 'bg-[#3ecf8e] text-[#171717] font-semibold shadow-xs'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Department Report Table</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-[4px] bg-black/10 dark:bg-white/10">
+                  {departmentAnalytics.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setAnalyticsReportType('category');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] font-medium transition-colors flex items-center gap-2 cursor-pointer',
+                  analyticsReportType === 'category'
+                    ? 'bg-[#3ecf8e] text-[#171717] font-semibold shadow-xs'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <Tag className="w-3.5 h-3.5" />
+                <span>Category Report Table</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-[4px] bg-black/10 dark:bg-white/10">
+                  {categoryAnalytics.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setAnalyticsReportType('payee');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] font-medium transition-colors flex items-center gap-2 cursor-pointer',
+                  analyticsReportType === 'payee'
+                    ? 'bg-[#3ecf8e] text-[#171717] font-semibold shadow-xs'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Top Payees Report Table</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-[4px] bg-black/10 dark:bg-white/10">
+                  {payeeAnalytics.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic('selection');
+                  setAnalyticsReportType('matrix');
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-[6px] font-medium transition-colors flex items-center gap-2 cursor-pointer',
+                  analyticsReportType === 'matrix'
+                    ? 'bg-[#3ecf8e] text-[#171717] font-semibold shadow-xs'
+                    : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-[#202020] hover:text-slate-900 dark:hover:text-white'
+                )}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>Overview Cards</span>
+              </button>
             </div>
-            <span className="text-xs font-mono text-emerald-600 dark:text-primary font-bold">
-              Σ {formatINR(telemetry.totalAmount)}
-            </span>
+
+            <div className="flex items-center gap-2 text-xs font-mono text-slate-500 dark:text-zinc-400">
+              <span>Total Active Spend:</span>
+              <strong className="text-slate-900 dark:text-white tabular-nums">
+                {formatINR(telemetry.totalAmount)}
+              </strong>
+            </div>
           </div>
-          {categoryAnalytics.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-[#141414] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-400 font-mono text-[11px] font-semibold">
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e]">
-                    <div className="flex items-center gap-1.5">
-                      <Tag className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Category Name</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-center w-28">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>Vouchers</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-right w-36">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Banknote className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Total Spend (₹)</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 text-left w-64">
-                    <div className="flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Spend Share (%)</span>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#242424] font-mono">
-                {categoryAnalytics.map((item) => (
-                  <tr
-                    key={item.name}
-                    onClick={() => {
-                      setSelectedCategory(item.name);
-                      setActiveSubTab('grid');
-                    }}
-                    className="hover:bg-slate-50 dark:hover:bg-[#202020] cursor-pointer transition-colors"
-                    title="Click to filter by this category"
-                  >
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] font-sans font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <span>{item.name}</span>
-                        <CornerDownRight className="w-3 h-3 text-slate-400 opacity-50" />
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-center text-slate-700 dark:text-gray-300 font-medium">
-                      {item.count}
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-right font-bold text-emerald-700 dark:text-primary tabular-nums">
-                      {formatINR(item.total)}
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-slate-100 dark:bg-[#141414] h-2 rounded-full overflow-hidden border border-slate-200 dark:border-[#2e2e2e]">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all duration-300"
-                            style={{ width: `${item.percentage}%` }}
-                          />
-                        </div>
-                        <span className="w-10 text-right text-[11px] text-slate-600 dark:text-zinc-400 font-medium">
-                          {item.percentage.toFixed(1)}%
+
+          {/* TABLE VIEW: Department Report */}
+          {analyticsReportType === 'department' && (
+            <div className="rounded-[8px] border border-slate-200/80 dark:border-[#242424] bg-white dark:bg-[#161616] overflow-hidden shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-300 font-sans font-semibold select-none">
+                      <th className="py-2.5 px-3 w-12 text-center border-r border-slate-200 dark:border-[#2e2e2e]">#</th>
+                      <th className="py-2.5 px-3 border-r border-slate-200 dark:border-[#2e2e2e]">Department Name</th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-200 dark:border-[#2e2e2e]">Bills</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Cash Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">UPI Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Total Spend (₹)</th>
+                      <th className="py-2.5 px-3 w-44 border-r border-slate-200 dark:border-[#2e2e2e]">% Share of Total</th>
+                      <th className="py-2.5 px-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
+                    {departmentAnalytics.map((dept, idx) => (
+                      <tr
+                        key={dept.name}
+                        className="hover:bg-slate-50/70 dark:hover:bg-[#1c1c1c] transition-colors"
+                      >
+                        <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-400 border-r border-slate-100 dark:border-[#242424]">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-[4px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <Building2 className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="font-medium text-slate-900 dark:text-white font-sans text-xs">
+                              {dept.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424]">
+                          {dept.count}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {dept.cashSum > 0 ? (
+                            <span className="text-emerald-700 dark:text-[#3ecf8e]">
+                              {formatINR(dept.cashSum)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {dept.upiSum > 0 ? (
+                            <span className="text-blue-700 dark:text-blue-400">
+                              {formatINR(dept.upiSum)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {formatINR(dept.total)}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="font-semibold text-slate-800 dark:text-zinc-200">
+                                {dept.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-[#202020] overflow-hidden">
+                              <div
+                                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.max(dept.percentage, 2)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic('light');
+                              setSelectedDept(dept.name);
+                              setActiveSubTab('grid');
+                            }}
+                            className="px-2 py-1 rounded-[4px] text-[11px] font-sans font-medium text-[#171717] dark:text-[#3ecf8e] bg-[#3ecf8e]/10 hover:bg-[#3ecf8e]/20 border border-[#3ecf8e]/30 cursor-pointer transition-colors"
+                            title={`Filter grid to ${dept.name}`}
+                          >
+                            View Bills
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {departmentAnalytics.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-10 text-center text-slate-400 font-sans">
+                          No department expenses found for active filter selection.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  {departmentAnalytics.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-slate-50 dark:bg-[#1a1a1a] border-t-2 border-slate-200 dark:border-[#2e2e2e] font-mono font-bold text-slate-900 dark:text-white">
+                        <td className="py-2.5 px-3 text-center">Σ</td>
+                        <td className="py-2.5 px-3 font-sans">Grand Total ({departmentAnalytics.length} Departments)</td>
+                        <td className="py-2.5 px-3 text-center">{telemetry.count}</td>
+                        <td className="py-2.5 px-3 text-right text-emerald-700 dark:text-[#3ecf8e]">{formatINR(telemetry.cashSum)}</td>
+                        <td className="py-2.5 px-3 text-right text-blue-700 dark:text-blue-400">{formatINR(telemetry.upiSum)}</td>
+                        <td className="py-2.5 px-3 text-right">{formatINR(telemetry.totalAmount)}</td>
+                        <td className="py-2.5 px-3 text-left font-sans text-xs">100.0%</td>
+                        <td className="py-2.5 px-3"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TABLE VIEW: Category Report */}
+          {analyticsReportType === 'category' && (
+            <div className="rounded-[8px] border border-slate-200/80 dark:border-[#242424] bg-white dark:bg-[#161616] overflow-hidden shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-300 font-sans font-semibold select-none">
+                      <th className="py-2.5 px-3 w-12 text-center border-r border-slate-200 dark:border-[#2e2e2e]">#</th>
+                      <th className="py-2.5 px-3 border-r border-slate-200 dark:border-[#2e2e2e]">Category Head</th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-200 dark:border-[#2e2e2e]">Bills</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Cash Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">UPI Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Total Spend (₹)</th>
+                      <th className="py-2.5 px-3 w-44 border-r border-slate-200 dark:border-[#2e2e2e]">% Share of Total</th>
+                      <th className="py-2.5 px-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
+                    {categoryAnalytics.map((cat, idx) => (
+                      <tr
+                        key={cat.name}
+                        className="hover:bg-slate-50/70 dark:hover:bg-[#1c1c1c] transition-colors"
+                      >
+                        <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-400 border-r border-slate-100 dark:border-[#242424]">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <div className="flex items-center gap-2">
+                            <VoucherCategoryAvatar category={cat.name} className="w-6 h-6 rounded-[4px]" />
+                            <span className="font-medium text-slate-900 dark:text-white font-sans text-xs">
+                              {cat.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424]">
+                          {cat.count}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {cat.cashSum > 0 ? (
+                            <span className="text-emerald-700 dark:text-[#3ecf8e]">
+                              {formatINR(cat.cashSum)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {cat.upiSum > 0 ? (
+                            <span className="text-blue-700 dark:text-blue-400">
+                              {formatINR(cat.upiSum)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {formatINR(cat.total)}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="font-semibold text-slate-800 dark:text-zinc-200">
+                                {cat.percentage.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-[#202020] overflow-hidden">
+                              <div
+                                className="h-full bg-[#3ecf8e] rounded-full transition-all duration-300"
+                                style={{ width: `${Math.max(cat.percentage, 2)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic('light');
+                              setSelectedCategory(cat.name);
+                              setActiveSubTab('grid');
+                            }}
+                            className="px-2 py-1 rounded-[4px] text-[11px] font-sans font-medium text-[#171717] dark:text-[#3ecf8e] bg-[#3ecf8e]/10 hover:bg-[#3ecf8e]/20 border border-[#3ecf8e]/30 cursor-pointer transition-colors"
+                            title={`Filter grid to ${cat.name}`}
+                          >
+                            View Bills
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {categoryAnalytics.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-10 text-center text-slate-400 font-sans">
+                          No category expenses found for active filter selection.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  {categoryAnalytics.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-slate-50 dark:bg-[#1a1a1a] border-t-2 border-slate-200 dark:border-[#2e2e2e] font-mono font-bold text-slate-900 dark:text-white">
+                        <td className="py-2.5 px-3 text-center">Σ</td>
+                        <td className="py-2.5 px-3 font-sans">Grand Total ({categoryAnalytics.length} Categories)</td>
+                        <td className="py-2.5 px-3 text-center">{telemetry.count}</td>
+                        <td className="py-2.5 px-3 text-right text-emerald-700 dark:text-[#3ecf8e]">{formatINR(telemetry.cashSum)}</td>
+                        <td className="py-2.5 px-3 text-right text-blue-700 dark:text-blue-400">{formatINR(telemetry.upiSum)}</td>
+                        <td className="py-2.5 px-3 text-right">{formatINR(telemetry.totalAmount)}</td>
+                        <td className="py-2.5 px-3 text-left font-sans text-xs">100.0%</td>
+                        <td className="py-2.5 px-3"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TABLE VIEW: Top Payees */}
+          {analyticsReportType === 'payee' && (
+            <div className="rounded-[8px] border border-slate-200/80 dark:border-[#242424] bg-white dark:bg-[#161616] overflow-hidden shadow-2xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-300 font-sans font-semibold select-none">
+                      <th className="py-2.5 px-3 w-12 text-center border-r border-slate-200 dark:border-[#2e2e2e]">#</th>
+                      <th className="py-2.5 px-3 border-r border-slate-200 dark:border-[#2e2e2e]">Payee / Vendor Name</th>
+                      <th className="py-2.5 px-3 border-r border-slate-200 dark:border-[#2e2e2e]">Category</th>
+                      <th className="py-2.5 px-3 text-center border-r border-slate-200 dark:border-[#2e2e2e]">Bills</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Cash Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">UPI Outflow (₹)</th>
+                      <th className="py-2.5 px-3 text-right border-r border-slate-200 dark:border-[#2e2e2e]">Total Spend (₹)</th>
+                      <th className="py-2.5 px-3 w-40 border-r border-slate-200 dark:border-[#2e2e2e]">% Share</th>
+                      <th className="py-2.5 px-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
+                    {payeeAnalytics.map((p, idx) => (
+                      <tr
+                        key={p.name}
+                        className="hover:bg-slate-50/70 dark:hover:bg-[#1c1c1c] transition-colors"
+                      >
+                        <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-400 border-r border-slate-100 dark:border-[#242424]">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <span className="font-medium text-slate-900 dark:text-white font-sans text-xs">
+                            {p.name}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424] font-sans text-slate-600 dark:text-zinc-400">
+                          {p.category}
+                        </td>
+                        <td className="py-2 px-3 text-center font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424]">
+                          {p.count}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {p.cashSum > 0 ? formatINR(p.cashSum) : <span className="text-slate-400">—</span>}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-700 dark:text-zinc-300 border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {p.upiSum > 0 ? formatINR(p.upiSum) : <span className="text-slate-400">—</span>}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white border-r border-slate-100 dark:border-[#242424] tabular-nums">
+                          {formatINR(p.total)}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-100 dark:border-[#242424]">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-mono font-semibold text-slate-800 dark:text-zinc-200">
+                              {p.percentage.toFixed(1)}%
+                            </span>
+                            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-[#202020] overflow-hidden">
+                              <div
+                                className="h-full bg-amber-500 rounded-full transition-all duration-300"
+                                style={{ width: `${Math.max(p.percentage, 2)}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerHaptic('light');
+                              setSearch(p.name);
+                              setActiveSubTab('grid');
+                            }}
+                            className="px-2 py-1 rounded-[4px] text-[11px] font-sans font-medium text-[#171717] dark:text-[#3ecf8e] bg-[#3ecf8e]/10 hover:bg-[#3ecf8e]/20 border border-[#3ecf8e]/30 cursor-pointer transition-colors"
+                            title={`Search bills for ${p.name}`}
+                          >
+                            Filter Payee
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {payeeAnalytics.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="py-10 text-center text-slate-400 font-sans">
+                          No payee records found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* CARD VIEW: Overview Matrix */}
+          {analyticsReportType === 'matrix' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in fade-in duration-150">
+              {/* 1. Category Breakdown Card */}
+              <div className="p-4 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] space-y-3 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#242424]">
+                  <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                    <span>Categories</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {categoryAnalytics.length} heads
+                  </span>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {categoryAnalytics.map((cat, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="font-sans font-medium text-slate-800 dark:text-zinc-200 truncate pr-2">
+                          {cat.name}
+                        </span>
+                        <span className="font-semibold text-slate-900 dark:text-white tabular-nums">
+                          {formatINR(cat.total)}
                         </span>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState
-              icon={BarChart3}
-              title="No category expenses found"
-              description="No expense vouchers recorded for any category in this branch yet."
-              actionLabel="Record Expense"
-              onAction={() => setActivePage('new-voucher')}
-              className="py-14"
-            />
+                      <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-[#202020] overflow-hidden">
+                        <div
+                          className="h-full bg-[#3ecf8e] rounded-full transition-all duration-300"
+                          style={{ width: `${Math.max(cat.percentage, 2)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Department Breakdown Card */}
+              <div className="p-4 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] space-y-3 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#242424]">
+                  <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Departments</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {departmentAnalytics.length} depts
+                  </span>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {departmentAnalytics.map((dept, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="font-sans font-medium text-slate-800 dark:text-zinc-200 truncate pr-2">
+                          {dept.name}
+                        </span>
+                        <span className="font-semibold text-slate-900 dark:text-white tabular-nums">
+                          {formatINR(dept.total)}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-[#202020] overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.max(dept.percentage, 2)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Top Payees Card */}
+              <div className="p-4 rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] space-y-3 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#242424]">
+                  <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Top Payees</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    Top {payeeAnalytics.length}
+                  </span>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {payeeAnalytics.slice(0, 10).map((p, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-xs font-mono py-1 border-b border-slate-100 dark:border-[#242424] last:border-b-0">
+                      <div className="truncate pr-2">
+                        <span className="font-sans font-medium text-slate-800 dark:text-zinc-200 block truncate">
+                          {p.name}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-sans">
+                          {p.category} · {p.count} bill{p.count > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <span className="font-semibold text-slate-900 dark:text-white tabular-nums shrink-0">
+                        {formatINR(p.total)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 8. GROUPED ANALYTICS BREAKDOWN: BY DEPARTMENT                           */}
-      {/* ========================================================================= */}
-      {activeSubTab === 'analytics_dept' && (
-        <div className="rounded-[12px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] overflow-hidden shadow-xs">
-          <div className="p-3 bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-primary" />
-              <h3 className="text-xs font-semibold text-slate-900 dark:text-white font-sans">
-                Expenses Aggregated by Department ({departmentAnalytics.length} departments)
-              </h3>
+      {/* Executive CA Audit & Expense Report View */}
+      {activeSubTab === 'report' && (
+        <div className="rounded-[12px] bg-white dark:bg-[#161616] border border-slate-200 dark:border-[#282828] p-5 space-y-4 shadow-sm print:m-0 print:border-none print:shadow-none animate-in fade-in duration-150">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-[#242424]">
+            <div>
+              <div className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-[#3ecf8e]" />
+                <h2 className="text-base font-medium font-sans text-slate-900 dark:text-white tracking-tight">
+                  Asopalav Expense Ledger &amp; Audit Report
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 font-mono">
+                Period: {effectiveStartDate || 'Beginning'} &rarr; {effectiveEndDate || 'Present'} · Generated: {formatDate(new Date(), 'dd MMM yyyy, HH:mm')}
+              </p>
             </div>
-            <span className="text-xs font-mono text-emerald-600 dark:text-primary font-bold">
-              Σ {formatINR(telemetry.totalAmount)}
-            </span>
-          </div>
-          {departmentAnalytics.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-[#141414] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-400 font-mono text-[11px] font-semibold">
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e]">
-                    <div className="flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Department</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-center w-28">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>Vouchers</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-right w-36">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Banknote className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Total Spend (₹)</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 text-left w-64">
-                    <div className="flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Spend Share (%)</span>
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#242424] font-mono">
-                {departmentAnalytics.map((item) => (
-                  <tr
-                    key={item.name}
-                    onClick={() => {
-                      setSelectedDept(item.name);
-                      setActiveSubTab('grid');
-                    }}
-                    className="hover:bg-slate-50 dark:hover:bg-[#202020] cursor-pointer transition-colors"
-                    title="Click to filter by this department"
-                  >
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] font-sans font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <span>{item.name}</span>
-                        <CornerDownRight className="w-3 h-3 text-slate-400 opacity-50" />
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-center text-slate-700 dark:text-gray-300 font-medium">
-                      {item.count}
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-right font-bold text-emerald-700 dark:text-primary tabular-nums">
-                      {formatINR(item.total)}
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-slate-100 dark:bg-[#141414] h-2 rounded-full overflow-hidden border border-slate-200 dark:border-[#2e2e2e]">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all duration-300"
-                            style={{ width: `${item.percentage}%` }}
-                          />
-                        </div>
-                        <span className="w-10 text-right text-[11px] text-slate-600 dark:text-zinc-400 font-medium">
-                          {item.percentage.toFixed(1)}%
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState
-              icon={Building2}
-              title="No department expenses found"
-              description="No expense vouchers recorded for any department in this branch yet."
-              actionLabel="Record Expense"
-              onAction={() => setActivePage('new-voucher')}
-              className="py-14"
-            />
-          )}
-        </div>
-      )}
 
-      {/* ========================================================================= */}
-      {/* 9. GROUPED ANALYTICS BREAKDOWN: BY TOP PAYEES                           */}
-      {/* ========================================================================= */}
-      {activeSubTab === 'analytics_payee' && (
-        <div className="rounded-[12px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] overflow-hidden shadow-xs">
-          <div className="p-3 bg-slate-50 dark:bg-[#171717] border-b border-slate-200 dark:border-[#2e2e2e] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-primary" />
-              <h3 className="text-xs font-semibold text-slate-900 dark:text-white font-sans">
-                Top Vendors & People Paid (Top {payeeAnalytics.length})
-              </h3>
+            <div className="flex items-center gap-2 print:hidden">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="h-8 px-3 rounded-[6px] border border-slate-200 dark:border-[#282828] hover:bg-slate-100 dark:hover:bg-[#202020] text-xs font-medium text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer font-sans"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Report</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="h-8 px-3 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer font-sans shadow-xs"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
             </div>
-            <span className="text-xs font-mono text-emerald-600 dark:text-primary font-bold">
-              Σ {formatINR(telemetry.totalAmount)}
-            </span>
           </div>
-          {payeeAnalytics.length > 0 ? (
-            <table className="w-full text-left border-collapse text-xs">
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2">
+            <div className="p-3 rounded-[8px] bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#242424]">
+              <span className="text-[11px] font-sans text-slate-500 dark:text-zinc-400">Total Outflow</span>
+              <div className="text-base font-mono font-medium tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {formatINR(telemetry.totalAmount)}
+              </div>
+            </div>
+            <div className="p-3 rounded-[8px] bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#242424]">
+              <span className="text-[11px] font-sans text-slate-500 dark:text-zinc-400">Cash Payments</span>
+              <div className="text-base font-mono font-medium tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {formatINR(telemetry.cashSum)} ({telemetry.cashPercent}%)
+              </div>
+            </div>
+            <div className="p-3 rounded-[8px] bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#242424]">
+              <span className="text-[11px] font-sans text-slate-500 dark:text-zinc-400">UPI / Online</span>
+              <div className="text-base font-mono font-medium tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {formatINR(telemetry.upiSum)} ({telemetry.upiPercent}%)
+              </div>
+            </div>
+            <div className="p-3 rounded-[8px] bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#242424]">
+              <span className="text-[11px] font-sans text-slate-500 dark:text-zinc-400">Total Transactions</span>
+              <div className="text-base font-mono font-medium tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {filteredVouchers.length} bills
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 dark:border-[#282828] rounded-[8px]">
+            <table className="w-full text-left text-xs font-mono">
               <thead>
-                <tr className="bg-slate-50 dark:bg-[#141414] border-b border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-gray-400 font-mono text-[11px] font-semibold">
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e]">
-                    <div className="flex items-center gap-1.5">
-                      <User className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Recipient / Vendor Name</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] w-40">
-                    <div className="flex items-center gap-1.5">
-                      <Tag className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Primary Category</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-center w-28">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>Vouchers</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#2e2e2e] text-right w-36">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Banknote className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Total Disbursed (₹)</span>
-                    </div>
-                  </th>
-                  <th className="py-2.5 px-3.5 text-left w-48">
-                    <div className="flex items-center gap-1.5">
-                      <BarChart3 className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" />
-                      <span>Share (%)</span>
-                    </div>
-                  </th>
+                <tr className="bg-slate-50 dark:bg-[#141414] border-b border-slate-200 dark:border-[#282828] text-[11px] uppercase tracking-wider text-slate-500 dark:text-zinc-400 font-medium">
+                  <th className="py-2.5 px-3">#</th>
+                  <th className="py-2.5 px-3">Date</th>
+                  <th className="py-2.5 px-3">Bill No.</th>
+                  <th className="py-2.5 px-3">Payee / Recipient</th>
+                  <th className="py-2.5 px-3">Category</th>
+                  <th className="py-2.5 px-3">Department</th>
+                  <th className="py-2.5 px-3">Mode</th>
+                  <th className="py-2.5 px-3 text-right">Amount (₹)</th>
+                  <th className="py-2.5 px-3">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-[#242424] font-mono">
-                {payeeAnalytics.map((item, idx) => (
-                  <tr
-                    key={item.name}
-                    onClick={() => {
-                      setSearch(item.name);
-                      setActiveSubTab('grid');
-                    }}
-                    className="hover:bg-slate-50 dark:hover:bg-[#202020] cursor-pointer transition-colors"
-                    title="Click to search all records for this payee"
-                  >
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] font-sans font-semibold text-slate-900 dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-400 text-xs w-5 font-mono">#{idx + 1}</span>
-                        <span>{item.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-slate-600 dark:text-zinc-400 font-sans text-xs">
-                      {item.category}
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-center text-slate-700 dark:text-gray-300 font-medium">
-                      {item.count}
-                    </td>
-                    <td className="py-2.5 px-3.5 border-r border-slate-200 dark:border-[#242424] text-right font-bold text-emerald-700 dark:text-primary tabular-nums">
-                      {formatINR(item.total)}
-                    </td>
-                    <td className="py-2.5 px-3.5">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-slate-100 dark:bg-[#141414] h-2 rounded-full overflow-hidden border border-slate-200 dark:border-[#2e2e2e]">
-                          <div
-                            className="bg-primary h-full rounded-full transition-all duration-300"
-                            style={{ width: `${item.percentage}%` }}
-                          />
-                        </div>
-                        <span className="w-10 text-right text-[11px] text-slate-600 dark:text-zinc-400 font-medium">
-                          {item.percentage.toFixed(1)}%
-                        </span>
-                      </div>
-                    </td>
+              <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
+                {filteredVouchers.map((v, idx) => (
+                  <tr key={v.id} className="hover:bg-slate-50 dark:hover:bg-[#1a1a1a] transition-colors">
+                    <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
+                    <td className="py-2 px-3 text-slate-900 dark:text-zinc-200">{v.payment_date || '-'}</td>
+                    <td className="py-2 px-3 font-semibold text-slate-900 dark:text-white">{v.voucher_number}</td>
+                    <td className="py-2 px-3 text-slate-900 dark:text-zinc-200 truncate max-w-[180px]">{v.recipient_name || '-'}</td>
+                    <td className="py-2 px-3 text-slate-600 dark:text-zinc-400">{v.category_name || '-'}</td>
+                    <td className="py-2 px-3 text-slate-600 dark:text-zinc-400">{v.department_name || '-'}</td>
+                    <td className="py-2 px-3">{v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'}</td>
+                    <td className="py-2 px-3 text-right font-medium text-slate-900 dark:text-white tabular-nums">{formatINR(Number(v.total_amount) || 0)}</td>
+                    <td className="py-2 px-3 text-[11px] text-[#3ecf8e]">{v.status || 'Approved'}</td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-slate-200 dark:border-[#282828] bg-slate-50 dark:bg-[#141414] font-semibold text-xs">
+                  <td colSpan={7} className="py-2.5 px-3 text-right">Grand Total ({filteredVouchers.length} vouchers):</td>
+                  <td className="py-2.5 px-3 text-right font-bold text-sm text-slate-900 dark:text-white tabular-nums">{formatINR(telemetry.totalAmount)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
             </table>
-          ) : (
-            <EmptyState
-              icon={Users}
-              title="No vendor records found"
-              description="No vendors or payees recorded in this branch yet."
-              actionLabel="Record Expense"
-              onAction={() => setActivePage('new-voucher')}
-              className="py-14"
-            />
-          )}
+          </div>
         </div>
       )}
     </div>

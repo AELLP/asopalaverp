@@ -93,7 +93,8 @@ export const LoginPage: React.FC = () => {
 
         if (!rpcAuthErr && rpcAuth) {
           if (rpcAuth.success && rpcAuth.user) {
-            setFailedAttempts(0);
+            setFailedAttemptsP(0);
+            setLockoutUntilP(null);
             await login(rpcAuth.user);
             showToast({
               type: 'success',
@@ -145,7 +146,6 @@ export const LoginPage: React.FC = () => {
       const DUMMY_HASH = '$2a$10$abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqr';
       const verifyCredential = (plain: string, storedHash?: string | null): boolean => {
         if (!storedHash || !plain) return false;
-        if (storedHash === plain) return true;
         if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
           try {
             return bcrypt.compareSync(plain, storedHash);
@@ -153,6 +153,7 @@ export const LoginPage: React.FC = () => {
             return false;
           }
         }
+        if (import.meta.env.DEV && storedHash === plain) return true;
         return false;
       };
 
@@ -246,7 +247,7 @@ export const LoginPage: React.FC = () => {
       logSecurityEvent({
         userName: `${userPayload.first_name} ${userPayload.last_name}`.trim(),
         userRole: userPayload.role_code,
-        actionType: 'SuperAdmin_Override' as any,
+        actionType: 'User_Login' as any,
         targetEntity: 'app_users',
         targetIdentifier: userPayload.username,
         eventDescription: `User @${userPayload.username} authenticated successfully`,
@@ -275,14 +276,11 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full flex flex-col justify-between bg-slate-50 dark:bg-[#141414] font-sans text-slate-900 dark:text-[#ededed] p-4 sm:p-6 lg:p-8 select-none selection:bg-[#3ecf8e]/25 selection:text-[#3ecf8e] relative overflow-hidden">
-      {/* Studio Ambient Glow */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] h-[480px] bg-[#3ecf8e]/5 dark:bg-[#3ecf8e]/5 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen w-full flex flex-col justify-between bg-slate-50 dark:bg-black font-sans text-slate-900 dark:text-[#ededed] p-4 sm:p-6 lg:p-8 select-none selection:bg-[#3ecf8e]/25 selection:text-[#3ecf8e] relative overflow-hidden">
       {/* ========================================================================= */}
       {/* TOP BAR: THEME SWITCHER (RIGHT ALIGNED)                                   */}
       {/* ========================================================================= */}
-      <header className="w-full max-w-4xl mx-auto flex items-center justify-end relative z-10">
+      <div className="w-full max-w-4xl mx-auto flex items-center justify-end relative z-10 bg-transparent">
         <button
           type="button"
           onClick={toggleTheme}
@@ -301,122 +299,120 @@ export const LoginPage: React.FC = () => {
             </>
           )}
         </button>
-      </header>
+      </div>
 
       {/* ========================================================================= */}
       {/* CENTER: STUDIO LOGIN CARD                                                 */}
       {/* ========================================================================= */}
-      <main className="w-full max-w-[400px] mx-auto my-auto py-8 relative z-10">
-        <div className="bg-white dark:bg-[#1c1c1c] border border-slate-200/80 dark:border-[#2e2e2e] rounded-[12px] p-6 sm:p-8 space-y-6 shadow-xl">
-          {/* Card Header */}
-          <div className="space-y-1.5 text-left">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white font-sans">
-              Welcome back
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500 dark:text-[#8e8e93] font-sans">
-              Sign in to your {brandName} terminal
-            </p>
+      <div className="w-full max-w-[400px] mx-auto my-auto p-6 sm:p-8 space-y-6 relative z-10 bg-white dark:bg-[#171717] border border-slate-200 dark:border-[#262626] rounded-[12px]">
+        {/* Card Header */}
+        <div className="space-y-1.5 text-left">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white font-sans">
+            Welcome back
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-[#8e8e93] font-sans">
+            Sign in to your {brandName} account
+          </p>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleLogin} className="space-y-4">
+          {/* Email / Username Field */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-slate-700 dark:text-[#a1a1a6]">
+              Email or Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="username"
+              className="w-full h-10 min-h-[40px] px-3.5 rounded-[6px] bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#282828] text-xs sm:text-sm text-slate-900 dark:text-[#ededed] placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 transition-all font-sans"
+              required
+            />
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleLogin} className="space-y-4">
-            {/* Email / Username Field */}
-            <div className="space-y-1.5">
+          {/* Password Field */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
               <label className="block text-xs font-medium text-slate-700 dark:text-[#a1a1a6]">
-                Email or Username
+                Password
               </label>
+              <button
+                type="button"
+                onClick={() => setShowForgotModal(true)}
+                className="text-xs text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                Forgot password?
+              </button>
+            </div>
+            <div className="relative flex items-center">
               <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="username"
-                className="w-full h-10 min-h-[40px] px-3.5 rounded-[6px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] text-xs sm:text-sm text-slate-900 dark:text-[#ededed] placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 transition-all font-sans"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                autoComplete="current-password"
+                className="w-full h-10 min-h-[40px] pl-3.5 pr-10 rounded-[6px] bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#282828] text-xs sm:text-sm text-slate-900 dark:text-[#ededed] placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 transition-all font-mono"
                 required
               />
-            </div>
-
-            {/* Password Field */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-medium text-slate-700 dark:text-[#a1a1a6]">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowForgotModal(true)}
-                  className="text-xs text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
-                >
-                  Forgot password?
-                </button>
-              </div>
-              <div className="relative flex items-center">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  autoComplete="current-password"
-                  className="w-full h-10 min-h-[40px] pl-3.5 pr-10 rounded-[6px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] text-xs sm:text-sm text-slate-900 dark:text-[#ededed] placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 transition-all font-mono"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="absolute right-3 text-slate-400 hover:text-slate-700 dark:text-zinc-500 dark:hover:text-white transition-colors cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Error Banner */}
-            {error && (
-              <div
-                ref={(el) => {
-                  if (el && error) {
-                    animateErrorBanner(el);
-                  }
-                }}
-                className="p-3 rounded-[6px] bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs font-sans flex items-center gap-2 font-medium"
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-3 text-slate-400 hover:text-slate-700 dark:text-zinc-500 dark:hover:text-white transition-colors cursor-pointer"
               >
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {/* Primary Emerald CTA */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full h-10 mt-2 rounded-[6px] bg-[#3ecf8e] hover:bg-[#3ecf8e]/90 text-[#171717] font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50 select-none"
-            >
-              {isLoading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-[#171717] border-t-transparent rounded-full animate-spin" />
-                  <span>Signing in...</span>
-                </>
-              ) : (
-                <span>Sign in</span>
-              )}
-            </button>
-          </form>
-
-          {/* Encrypted Session Tag */}
-          <div className="pt-1 flex items-center justify-center gap-1.5 text-[11px] text-[#707070] dark:text-[#8E8E93]">
-            <Lock className="w-3 h-3 text-emerald-600 dark:text-[#3ecf8e]" />
-            <span>End-to-End Encrypted Session</span>
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
+
+          {/* Error Banner */}
+          {error && (
+            <div
+              ref={(el) => {
+                if (el && error) {
+                  animateErrorBanner(el);
+                }
+              }}
+              className="p-3 rounded-[6px] bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs font-sans flex items-center gap-2 font-medium"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Primary Emerald CTA */}
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full h-10 mt-2 rounded-[6px] bg-[#3ecf8e] hover:bg-[#3ecf8e]/90 text-[#171717] font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 select-none"
+          >
+            {isLoading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-[#171717] border-t-transparent rounded-full animate-spin" />
+                <span>Signing in...</span>
+              </>
+            ) : (
+              <span>Sign in</span>
+            )}
+          </button>
+        </form>
+
+        {/* Encrypted Session Tag */}
+        <div className="pt-1 flex items-center justify-center gap-1.5 text-[11px] text-[#707070] dark:text-[#8E8E93]">
+          <Lock className="w-3 h-3 text-emerald-600 dark:text-[#3ecf8e]" />
+          <span>End-to-End Encrypted Session</span>
         </div>
-      </main>
+      </div>
 
       {/* ========================================================================= */}
       {/* FOOTER: COPYRIGHT & PROTOCOL INFO                                         */}
       {/* ========================================================================= */}
-      <footer className="w-full max-w-4xl mx-auto text-center py-2 text-[11px] text-[#707070] dark:text-[#8E8E93] font-sans">
-        <span>Protected by Asopalav Security & SHA-256 Ledger</span>
-      </footer>
+      <div className="w-full max-w-4xl mx-auto text-center py-2 text-[11px] text-[#707070] dark:text-[#8E8E93] font-sans bg-transparent">
+        <span>Protected by Asopalav Role-Based Security</span>
+      </div>
 
       {/* ========================================================================= */}
       {/* FORGOT PASSWORD MODAL                                                     */}
@@ -430,7 +426,7 @@ export const LoginPage: React.FC = () => {
                   <HelpCircle className="w-4 h-4" />
                 </div>
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-white font-sans">
-                  Reset Terminal Access
+                  Reset Account Access
                 </h3>
               </div>
               <button

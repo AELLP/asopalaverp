@@ -222,7 +222,7 @@ export const PosQuickCalculator: React.FC = () => {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="POS Calculator"
+      aria-label="Quick Calculator"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
     >
       {/* Backdrop */}
@@ -250,7 +250,7 @@ export const PosQuickCalculator: React.FC = () => {
             </div>
             <div>
               <h3 className="text-xs font-semibold text-slate-900 dark:text-white tracking-tight flex items-center gap-1.5">
-                <span>POS Calculator</span>
+                <span>Quick Calculator</span>
                 {mode === 'pro' && (
                   <span className="px-1.5 py-0.2 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] text-[9px] font-mono font-bold border border-[#3ecf8e]/30">
                     DISCOUNT PRO
@@ -301,7 +301,6 @@ export const PosQuickCalculator: React.FC = () => {
                 {expression}
               </div>
               <div className="text-2xl sm:text-3xl font-mono font-bold tabular-nums text-slate-900 dark:text-white tracking-tight flex items-baseline gap-1">
-                <span className="text-sm font-sans text-slate-400 font-normal">₹</span>
                 {formatINR(currentMathResult)}
               </div>
             </div>
@@ -535,7 +534,7 @@ export const PosQuickCalculator: React.FC = () => {
                 <div>
                   <span className="text-xs text-slate-500 dark:text-[#8e8e93] block">Final Payable Price</span>
                   <strong className="text-2xl font-mono font-bold text-emerald-700 dark:text-[#3ecf8e] tabular-nums">
-                    ₹{formatINR(discountCalculations.finalPrice)}
+                    {formatINR(discountCalculations.finalPrice)}
                   </strong>
                 </div>
               </div>
@@ -544,7 +543,7 @@ export const PosQuickCalculator: React.FC = () => {
                 <div className="p-2 rounded-[6px] bg-rose-500/10 border border-rose-500/20">
                   <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">Customer Savings:</span>
                   <strong className="font-mono text-sm text-rose-600 dark:text-rose-400">
-                    -₹{formatINR(discountCalculations.savings)}
+                    -{formatINR(discountCalculations.savings)}
                   </strong>
                 </div>
                 <div className="p-2 rounded-[6px] bg-slate-100 dark:bg-[#202024] border border-slate-200 dark:border-[#2e2e32]">
@@ -563,7 +562,7 @@ export const PosQuickCalculator: React.FC = () => {
           <div className="text-xs text-slate-500 dark:text-[#8e8e93] flex items-center gap-1 font-mono">
             <span>Result:</span>
             <strong className="font-mono text-slate-900 dark:text-white tabular-nums">
-              ₹{formatINR(mode === 'math' ? currentMathResult : discountCalculations.finalPrice)}
+              {formatINR(mode === 'math' ? currentMathResult : discountCalculations.finalPrice)}
             </strong>
           </div>
 

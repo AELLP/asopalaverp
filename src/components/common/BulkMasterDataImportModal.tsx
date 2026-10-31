@@ -6,20 +6,14 @@ import { useVouchers } from '@/hooks/useVouchers';
 import { erpService } from '@/lib/erpService';
 import { supabase } from '@/lib/supabase';
 import { SlideOverDrawer } from '@/components/ui/SlideOverDrawer';
-import {
-  X,
-  Tag,
+import {  Tag,
   Layers,
   Truck,
   Users,
-  Building2,
-  FileSpreadsheet,
-  CheckCircle2,
+  Building2,  CheckCircle2,
   AlertTriangle,
   UploadCloud,
-  Check,
-  Trash2,
-  Sparkles,
+  Check,  Sparkles,
   HelpCircle,
   FileText,
   AlertOctagon,
@@ -495,8 +489,7 @@ export const BulkMasterDataImportModal: React.FC = () => {
   const existingDbCount = parsedItems.filter((i) => i.valid && i.isExistingDb).length;
   const batchDupCount = parsedItems.filter((i) => i.valid && i.isBatchDuplicate).length;
   const invalidCount = parsedItems.filter((i) => !i.valid).length;
-  const validCount = parsedItems.filter((i) => i.valid).length;
-
+  
   const handleSafeClose = () => {
     if (rawText.trim().length > 0 && parsedItems.length > 0) {
       setShowDiscardConfirm(true);
@@ -610,7 +603,7 @@ export const BulkMasterDataImportModal: React.FC = () => {
         return;
       }
 
-      fetchBranchesAndWallets();
+      fetchBranchesAndWallets(true);
       refresh();
 
       // Update existing keys state immediately
@@ -633,7 +626,7 @@ export const BulkMasterDataImportModal: React.FC = () => {
 
         setResultMessage({
           type: 'warning',
-          message: `Smart Import: ${res.insertedCount} new records saved to Supabase.${skippedCount > 0 ? ` ${skippedCount} already-existing items were skipped.` : ''}${invalidCount > 0 ? ` ${invalidCount} invalid rows were skipped.` : ''}`,
+          message: `Smart Import: ${res.insertedCount} new records saved successfully.${skippedCount > 0 ? ` ${skippedCount} already-existing items were skipped.` : ''}${invalidCount > 0 ? ` ${invalidCount} invalid rows were skipped.` : ''}`,
         });
       } else {
         // 100% clean import

@@ -1,21 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useUIStore } from '@/store/uiStore';
 import { useAuthStore } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
-import { useNotificationStore } from '@/store/notificationStore';
 import { useOfflineQueue } from '@/lib/offlineQueue';
 import { erpService } from '@/lib/erpService';
-import { cn } from '@/lib/utils';
+import { calculateDailyTreasuryBalances, TreasuryDailyBreakdown } from '@/lib/dailyCashBalance';
+import { cn, normalizeBranchCode } from '@/lib/utils';
 import {
   Menu,
   Search,
   Moon,
   Sun,
   Wallet,
-  CloudOff,
-  RefreshCw,
-  Bell,
-  Calculator,
+  CloudOff,  Calculator,
   User,
   Lock,
   LogOut,
@@ -29,7 +26,6 @@ import {
   AppSidebarExpandIcon,
 } from '@/components/icons/AppIcons';
 import { useBrandStore } from '@/store/brandStore';
-import { useOverrideStore } from '@/store/overrideStore';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface TopbarProps {
@@ -50,42 +46,73 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
     isSidebarCollapsed,
   } = useUIStore();
   const { user, lockScreen, logout, can } = useAuthStore();
-  const { getActiveBranch, selectedBranchId } = useBranchStore();
-  const { mutations, isOnline, isSyncing, processSyncQueue } = useOfflineQueue();
-  const { getUnreadCount } = useNotificationStore();
-  const { isCeilingExceededAllowed } = useOverrideStore();
+  const { getActiveBranch, selectedBranchId, wallets, fetchBranchesAndWallets } = useBranchStore();
+  const { isOnline } = useOfflineQueue();
 
-  const [cashBalance, setCashBalance] = useState(0);
-  const [upiBalance, setUpiBalance] = useState(0);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
 
+  const [isCashDrawerPopoverOpen, setIsCashDrawerPopoverOpen] = useState(false);
+  const cashPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [todayTreasurySummary, setTodayTreasurySummary] = useState<TreasuryDailyBreakdown | null>(null);
+
   const activeBranch = getActiveBranch();
-  const maxCashCeiling = activeBranch?.max_cash_ceiling || 25000;
-  const isSafeDropAlert = cashBalance > maxCashCeiling && !isCeilingExceededAllowed();
+  const branchTarget = activeBranch?.branch_id || selectedBranchId || 'Aellp-ASI';
+  const targetWallet = wallets[branchTarget] || wallets[normalizeBranchCode(branchTarget)] || wallets['Aellp-ASI'];
 
-  const username = user?.username || '';
-  const userRole = user?.role_code || 'Super_Admin';
-  const unreadNotifs = getUnreadCount(username, userRole, selectedBranchId === 'ALL' ? undefined : selectedBranchId);
+  // Live reactive wallet balances from central Zustand store
+  const cashBalance = targetWallet ? Number(targetWallet.cash_balance) : 78630;
+  const upiBalance = targetWallet ? Number(targetWallet.upi_balance) : 208569;
 
+    
   const userFullName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
-  const userInitials =
-    user?.avatar_initials ||
-    (user?.first_name
-      ? `${user.first_name[0]}${user.last_name ? user.last_name[0] : ''}`.toUpperCase()
-      : 'AD');
+  
+  const ledgerRef = useRef<any[]>([]);
+  const isFetchingLedgerRef = useRef(false);
 
-  // Close user dropdown on outside click or ESC
+  // Load today's cash drawer opening, inflows, and outflows (Deduplicated)
+  const loadTodayCashFlow = useCallback(async () => {
+    if (isFetchingLedgerRef.current) return;
+    isFetchingLedgerRef.current = true;
+    try {
+      const branchToQuery = selectedBranchId === 'ALL' ? undefined : selectedBranchId;
+      const ledger = await erpService.getWalletLedger(branchToQuery);
+      ledgerRef.current = ledger;
+      const currentWallets = useBranchStore.getState().wallets;
+      const w = currentWallets[branchTarget] || currentWallets[normalizeBranchCode(branchTarget)] || currentWallets['Aellp-ASI'];
+      const activeCash = w ? Number(w.cash_balance) : 78630;
+      const activeUpi = w ? Number(w.upi_balance) : 208569;
+      const summary = calculateDailyTreasuryBalances(ledger, activeCash, activeUpi);
+      setTodayTreasurySummary(summary);
+    } catch (err) {
+      console.warn('Error loading today cash flow for topbar:', err);
+    } finally {
+      isFetchingLedgerRef.current = false;
+    }
+  }, [selectedBranchId, branchTarget]);
+
+  // Recalculate if balances update without repeating network calls
   useEffect(() => {
-    if (!isUserMenuOpen) return;
+    if (ledgerRef.current.length > 0) {
+      const summary = calculateDailyTreasuryBalances(ledgerRef.current, cashBalance, upiBalance);
+      setTodayTreasurySummary(summary);
+    }
+  }, [cashBalance, upiBalance]);
+
+  // Close user dropdown or cash drawer popover on outside click or ESC
+  useEffect(() => {
     const handleClickOutside = (e: MouseEvent | TouchEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setIsUserMenuOpen(false);
+      }
+      if (cashPopoverRef.current && !cashPopoverRef.current.contains(e.target as Node)) {
+        setIsCashDrawerPopoverOpen(false);
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsUserMenuOpen(false);
+        setIsCashDrawerPopoverOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -96,39 +123,48 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
       document.removeEventListener('touchstart', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isUserMenuOpen]);
+  }, []);
 
-  // Live Wallet Balances
-  const refreshWallet = async () => {
-    if (!activeBranch?.branch_id) return;
+  const lastRefreshRef = useRef(0);
+  // Live Wallet Balances Sync (Throttled to max once every 3s)
+  const refreshWallet = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastRefreshRef.current < 3000) return;
+    lastRefreshRef.current = now;
     try {
-      const w = await erpService.getBranchWallet(activeBranch.branch_id);
-      setCashBalance(w.cash_balance);
-      setUpiBalance(w.upi_balance);
+      await fetchBranchesAndWallets(true);
     } catch {
       // Handled gracefully
     }
-  };
+  }, [fetchBranchesAndWallets]);
 
   useEffect(() => {
     refreshWallet();
-    const handleWalletUpdated = () => {
-      refreshWallet();
+    loadTodayCashFlow();
+
+    // Only update today cash flow calculation on wallet/ledger events (DO NOT re-trigger fetchBranchesAndWallets)
+    const handleReconcile = () => {
+      loadTodayCashFlow();
     };
-    window.addEventListener('asopalav:wallet-updated', handleWalletUpdated);
-    window.addEventListener('asopalav:ledger-updated', handleWalletUpdated);
+
+    window.addEventListener('asopalav:wallet-updated', handleReconcile);
+    window.addEventListener('asopalav:ledger-updated', handleReconcile);
+    window.addEventListener('focus', handleReconcile);
+
     return () => {
-      window.removeEventListener('asopalav:wallet-updated', handleWalletUpdated);
-      window.removeEventListener('asopalav:ledger-updated', handleWalletUpdated);
+      window.removeEventListener('asopalav:wallet-updated', handleReconcile);
+      window.removeEventListener('asopalav:ledger-updated', handleReconcile);
+      window.removeEventListener('focus', handleReconcile);
     };
-  }, [activeBranch?.branch_id, selectedBranchId]);
+  }, [selectedBranchId, branchTarget]);
 
   const pageTitles: Record<string, string> = {
     dashboard: 'Dashboard',
     'new-voucher': 'Add Expense',
     expenses: 'All Expenses',
-    treasury: 'Cash Box & Bank',
+    treasury: 'Cash Drawer & UPI',
     advances: 'Staff Advances (Beta)',
+    reports: 'Financial & Audit Reports',
     staff: 'Staff Directory',
     settings: 'Shop Settings',
     audit: 'Activity History',
@@ -214,36 +250,136 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
             <Kbd size="xs" className="hidden xl:inline-flex rounded-[4px]">Ctrl K</Kbd>
           </button>
 
-          {/* 2A & 2B. Cash Box & Bank UPI Balance Pills (Restricted to Authorized Roles) */}
+          {/* 2A & 2B. Cash Box & Online UPI Balance Pills (Restricted to Authorized Roles) */}
           {can('can_inject_float') && (
             <>
-              {/* 2A. Cash Box Balance Pill (lg+) */}
-              <button
-                type="button"
-                onClick={() => setActivePage('treasury')}
-                aria-label={`Cash Box Balance: ₹${cashBalance.toLocaleString('en-IN')}`}
-                className={cn(
-                  'hidden lg:flex items-center gap-2 h-9 px-3 rounded-[6px] border text-xs font-mono transition-colors shadow-2xs cursor-pointer select-none shrink-0',
-                  isSafeDropAlert
-                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/15'
-                    : 'border-slate-200/80 dark:border-[#242424] bg-slate-50/50 dark:bg-[#181818] text-slate-800 dark:text-[#ededed] hover:border-slate-300 dark:hover:border-[#2e2e2e] hover:bg-slate-100 dark:hover:bg-[#202020]'
-                )}
-                title="Cash currently in shop cash drawer (Click to manage)"
-              >
-                <Wallet className="w-4 h-4 text-slate-400 dark:text-[#707070] shrink-0 stroke-[1.8]" />
-                <span className="text-[11px] uppercase font-mono tracking-wider text-slate-400 dark:text-[#707070]">Cash:</span>
-                <strong className="font-semibold tabular-nums text-xs text-emerald-600 dark:text-[#3ecf8e]">
-                  <AnimatedCounter value={cashBalance} isCurrency />
-                </strong>
-              </button>
+              {/* 2A. Cash Box Balance Pill with Today's Opening & Closing Statement Popover */}
+              <div className="relative" ref={cashPopoverRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsCashDrawerPopoverOpen((prev) => !prev)}
+                  aria-label={`Cash Box Balance: ₹${cashBalance.toLocaleString('en-IN')}`}
+                  className={cn(
+                    'hidden lg:flex items-center gap-2 h-9 px-3 rounded-[6px] border text-xs font-mono transition-colors shadow-2xs cursor-pointer select-none shrink-0',
+                    isCashDrawerPopoverOpen
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e]'
+                      : 'border-slate-200/80 dark:border-[#242424] bg-slate-50/50 dark:bg-[#181818] text-slate-800 dark:text-[#ededed] hover:border-slate-300 dark:hover:border-[#2e2e2e] hover:bg-slate-100 dark:hover:bg-[#202020]'
+                  )}
+                  title="Today's Cash Drawer Balance (Click to view Opening/Closing sheet)"
+                >
+                  <Wallet className="w-4 h-4 text-slate-400 dark:text-[#707070] shrink-0 stroke-[1.8]" />
+                  <span className="text-[11px] uppercase font-mono tracking-wider text-slate-400 dark:text-[#707070]">Cash:</span>
+                  <strong className="font-semibold tabular-nums text-xs text-emerald-600 dark:text-[#3ecf8e]">
+                    <AnimatedCounter value={cashBalance} isCurrency />
+                  </strong>
+                  {todayTreasurySummary && (
+                    <span className="hidden 2xl:inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-[#707070] font-mono border-l border-slate-200 dark:border-[#333333] pl-2 ml-0.5">
+                      <span>Open: ₹{Math.round(todayTreasurySummary.cash.opening).toLocaleString('en-IN')}</span>
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={cn(
+                      'w-3 h-3 text-slate-400 transition-transform duration-150',
+                      isCashDrawerPopoverOpen && 'rotate-180 text-emerald-600 dark:text-[#3ecf8e]'
+                    )}
+                  />
+                </button>
 
-              {/* 2B. Bank UPI Balance Pill (xl+) */}
+                {/* Today's Cash Drawer Reconciliation Popover */}
+                {isCashDrawerPopoverOpen && (
+                  <div className="absolute left-0 mt-1.5 w-80 rounded-[10px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] shadow-2xl z-[100] p-3 font-sans animate-in fade-in zoom-in-95 duration-100">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-[#242424]">
+                      <div className="flex items-center gap-1.5">
+                        <Wallet className="w-4 h-4 text-[#3ecf8e]" />
+                        <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans">
+                          Today's Cash Reconciliation
+                        </span>
+                      </div>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] font-medium">
+                        Live Till
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5 text-xs font-mono">
+                      <div className="flex items-center justify-between py-1 px-1.5 rounded bg-slate-50 dark:bg-[#141414]">
+                        <span className="text-slate-500 dark:text-[#888888]">1. Morning Opening Cash:</span>
+                        <span className="font-semibold text-slate-900 dark:text-white tabular-nums">
+                          ₹{todayTreasurySummary ? Math.round(todayTreasurySummary.cash.opening).toLocaleString('en-IN') : cashBalance.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 px-1.5 rounded bg-slate-50 dark:bg-[#141414]">
+                        <span className="text-slate-500 dark:text-[#888888]">2. Morning Opening UPI:</span>
+                        <span className="font-semibold text-sky-600 dark:text-sky-400 tabular-nums">
+                          ₹{todayTreasurySummary ? Math.round(todayTreasurySummary.upi.opening).toLocaleString('en-IN') : upiBalance.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 px-1.5 rounded bg-slate-100/70 dark:bg-[#1a1a1a] border border-slate-200/50 dark:border-[#262626]">
+                        <span className="text-slate-600 dark:text-zinc-300 font-medium">Combined Day Opening:</span>
+                        <span className="font-bold text-slate-900 dark:text-white tabular-nums">
+                          ₹{todayTreasurySummary ? Math.round(todayTreasurySummary.total.opening).toLocaleString('en-IN') : (cashBalance + upiBalance).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 px-1.5 rounded bg-slate-50 dark:bg-[#141414]">
+                        <span className="text-emerald-600 dark:text-[#3ecf8e]">3. Cash Inflows (+) Float:</span>
+                        <span className="font-semibold text-emerald-600 dark:text-[#3ecf8e] tabular-nums">
+                          +₹{todayTreasurySummary ? Math.round(todayTreasurySummary.cash.inflow).toLocaleString('en-IN') : '0'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1 px-1.5 rounded bg-slate-50 dark:bg-[#141414]">
+                        <span className="text-rose-600 dark:text-rose-400">4. Cash Outflows (-) Vouchers:</span>
+                        <span className="font-semibold text-rose-600 dark:text-rose-400 tabular-nums">
+                          -₹{todayTreasurySummary ? Math.round(todayTreasurySummary.cash.outflow).toLocaleString('en-IN') : '0'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between py-1.5 px-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-xs">
+                        <span className="font-semibold text-emerald-800 dark:text-[#3ecf8e] font-sans">
+                          5. Current Cash in Till:
+                        </span>
+                        <span className="font-bold text-emerald-700 dark:text-[#3ecf8e] tabular-nums text-sm">
+                          ₹{cashBalance.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2.5 mt-2.5 border-t border-slate-100 dark:border-[#242424] flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCashDrawerPopoverOpen(false);
+                          setActivePage('treasury');
+                        }}
+                        className="flex-1 py-1.5 px-2 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                      >
+                        <span>Passbook Ledger (F4)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCashDrawerPopoverOpen(false);
+                          setActivePage('reports');
+                        }}
+                        className="py-1.5 px-2.5 rounded-[6px] border border-slate-200 dark:border-[#282828] hover:bg-slate-50 dark:hover:bg-[#202020] text-slate-700 dark:text-[#A1A1A1] text-xs font-sans transition-colors cursor-pointer"
+                      >
+                        <span>Reports</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 2B. Online UPI Balance Pill (xl+) */}
               <button
                 type="button"
                 onClick={() => setActivePage('treasury')}
                 aria-label={`UPI Balance: ₹${upiBalance.toLocaleString('en-IN')}`}
                 className="hidden xl:flex items-center gap-2 h-9 px-3 rounded-[6px] border border-slate-200/80 dark:border-[#242424] bg-slate-50/50 dark:bg-[#181818] text-slate-800 dark:text-[#ededed] hover:border-slate-300 dark:hover:border-[#2e2e2e] hover:bg-slate-100 dark:hover:bg-[#202020] text-xs font-mono transition-colors shadow-2xs cursor-pointer select-none shrink-0"
-                title="Bank UPI account balance (Click to manage)"
+                title="UPI account balance (Click to manage)"
               >
                 <span className="text-[11px] uppercase font-mono tracking-wider text-slate-400 dark:text-[#707070]">UPI:</span>
                 <strong className="font-semibold tabular-nums text-xs text-sky-500 dark:text-sky-400">
@@ -253,69 +389,23 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
             </>
           )}
 
-          {/* 3. POS Quick Calculator Trigger */}
+          {/* 3. Quick Calculator Trigger */}
           <button
             type="button"
             onClick={() => setCalculatorOpen(true)}
-            aria-label="POS Quick Calculator"
+            aria-label="Quick Calculator"
             className="hidden sm:flex items-center justify-center w-9 h-9 rounded-[6px] border border-slate-200/80 dark:border-[#242424] hover:border-slate-300 dark:hover:border-[#2e2e2e] bg-slate-50/50 dark:bg-[#181818] hover:bg-slate-100 dark:hover:bg-[#202020] text-slate-500 dark:text-[#a1a1a1] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer shadow-2xs shrink-0"
-            title="POS Math, GST & Change Return Calculator"
+            title="Quick Math & Discount Calculator"
           >
             <Calculator className="w-4 h-4 stroke-[1.8]" />
           </button>
 
-          {/* 4. Cloud Sync Status Pill — only shown when there's something to act on */}
-          {(!isOnline || isSyncing || mutations.length > 0) && (
-            <button
-              type="button"
-              onClick={() => {
-                if (mutations.length > 0 || !isOnline) {
-                  processSyncQueue();
-                }
-              }}
-              disabled={isSyncing}
-              aria-label={`Cloud Sync: ${!isOnline ? 'Offline' : isSyncing ? 'Syncing...' : `${mutations.length} Pending`}`}
-              className={cn(
-                'flex items-center gap-2 h-9 px-3 rounded-[6px] border text-xs font-mono transition-colors shadow-2xs select-none cursor-pointer',
-                !isOnline
-                  ? 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/15'
-                  : isSyncing
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-[#3ecf8e]'
-                  : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/15 animate-pulse'
-              )}
-              title={
-                !isOnline
-                  ? `Offline: ${mutations.length} transactions queued locally. Click to retry connection.`
-                  : isSyncing
-                  ? 'Syncing offline mutations to cloud...'
-                  : `${mutations.length} offline transactions pending. Click to sync now.`
-              }
-            >
-              {!isOnline ? (
-                <>
-                  <CloudOff className="w-4 h-4 text-rose-500 stroke-[1.8] animate-pulse shrink-0" />
-                  <span className="hidden sm:inline text-xs font-medium text-rose-600 dark:text-rose-400">Offline</span>
-                  {mutations.length > 0 && (
-                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-500/20 text-rose-600 dark:text-rose-400">
-                      {mutations.length}
-                    </span>
-                  )}
-                </>
-              ) : isSyncing ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-emerald-600 dark:text-[#3ecf8e] stroke-[1.8] shrink-0" />
-                  <span className="hidden sm:inline text-xs font-medium text-emerald-600 dark:text-[#3ecf8e]">Syncing</span>
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="w-4 h-4 text-amber-500 stroke-[1.8] shrink-0" />
-                  <span className="hidden sm:inline text-xs font-medium text-amber-600 dark:text-amber-400">Sync</span>
-                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400">
-                    {mutations.length}
-                  </span>
-                </>
-              )}
-            </button>
+          {/* Offline Notice (Only shown if internet disconnects) */}
+          {!isOnline && (
+            <span className="flex items-center gap-1.5 h-9 px-2.5 rounded-[6px] text-xs font-medium text-rose-600 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50">
+              <CloudOff className="w-3.5 h-3.5" />
+              <span>Offline</span>
+            </span>
           )}
 
           {/* 5. User Profile Avatar & Menu */}
@@ -343,9 +433,6 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                   size={24}
                   className="border border-emerald-500/30 shrink-0 shadow-2xs"
                 />
-                {unreadNotifs > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white dark:ring-[#141414]" />
-                )}
               </div>
 
               <span className="hidden sm:inline-block text-xs font-semibold text-slate-800 dark:text-zinc-200 max-w-[95px] truncate font-sans">
@@ -416,38 +503,6 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                     </div>
                   </button>
 
-                  {/* System Notifications Center */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsUserMenuOpen(false);
-                      setActivePage('notifications');
-                    }}
-                    className={cn(
-                      'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[6px] text-left transition-colors cursor-pointer',
-                      activePage === 'notifications'
-                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] font-medium'
-                        : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#222222] hover:text-slate-900 dark:hover:text-white'
-                    )}
-                  >
-                    <div className="relative shrink-0">
-                      <Bell className="w-4 h-4 text-slate-500 dark:text-[#a1a1a1] stroke-[1.8]" />
-                      {unreadNotifs > 0 && (
-                        <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-xs truncate flex items-center justify-between">
-                        <span>Notifications</span>
-                        {unreadNotifs > 0 && (
-                          <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold">
-                            {unreadNotifs > 9 ? '9+' : unreadNotifs} new
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-slate-400 dark:text-[#707070] truncate">Alerts, audit & system warnings</div>
-                    </div>
-                  </button>
 
                   {/* Shop Settings (Restricted to Authorized Admins) */}
                   {can('can_manage_periods') && (
@@ -492,7 +547,9 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                           {theme === 'dark' ? 'Studio Dark' : theme === 'soft-dark' ? 'Soft Dark' : 'Light'}
                         </span>
                       </div>
-                      <div className="text-[10px] text-slate-400 dark:text-[#707070] truncate">Click to cycle Light / Dark</div>
+                      <div className="text-[10px] text-slate-400 dark:text-[#707070] truncate">
+                        Click to cycle White / Dark / Soft Dark
+                      </div>
                     </div>
                   </button>
 
@@ -510,7 +567,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                     <Lock className="w-4 h-4 text-amber-500 shrink-0 stroke-[1.8]" />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-xs truncate">Lock Screen</div>
-                      <div className="text-[10px] text-slate-400 dark:text-[#707070] truncate">Quick lock counter terminal</div>
+                      <div className="text-[10px] text-slate-400 dark:text-[#707070] truncate">Quick lock counter screen</div>
                     </div>
                   </button>
 

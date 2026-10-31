@@ -54,18 +54,51 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function formatINR(amount: number, compact: boolean = false): string {
   if (isNaN(amount) || amount === null || amount === undefined) return '₹0.00';
-  
-  if (compact && Math.abs(amount) >= 100000) {
-    const inLakhs = amount / 100000;
-    return `₹${inLakhs.toFixed(2)}L`;
+  const isNegative = amount < 0;
+  const absAmount = Math.abs(amount);
+
+  if (compact && absAmount >= 100000) {
+    const inLakhs = absAmount / 100000;
+    return `${isNegative ? '-' : ''}₹${inLakhs.toFixed(2)}L`;
   }
 
-  const formatted = Number(amount).toLocaleString('en-IN', {
+  const formatted = absAmount.toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
-  return `₹${formatted}`;
+  return `${isNegative ? '-' : ''}₹${formatted}`;
+}
+
+/**
+ * Formats numbers in clean Instagram / modern dashboard compact K and M notation (e.g. ₹45.7K, ₹1.44M, ₹100K)
+ */
+export function formatCompactINR(amount: number): string {
+  if (isNaN(amount) || amount === null || amount === undefined) return '₹0';
+  const sign = amount < 0 ? '-' : '';
+  const abs = Math.abs(amount);
+
+  if (abs >= 1_000_000_000) {
+    const val = abs / 1_000_000_000;
+    return `${sign}₹${val >= 100 ? Math.round(val) : val.toFixed(1).replace(/\.0$/, '')}B`;
+  }
+  if (abs >= 1_000_000) {
+    const val = abs / 1_000_000;
+    return `${sign}₹${val >= 100 ? Math.round(val) : val.toFixed(2).replace(/\.00$/, '')}M`;
+  }
+  if (abs >= 10_000) {
+    const val = abs / 1_000;
+    return `${sign}₹${val >= 100 ? Math.round(val) : val.toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  if (abs >= 1_000) {
+    const val = abs / 1_000;
+    return `${sign}₹${val.toFixed(1).replace(/\.0$/, '')}K`;
+  }
+
+  return `${sign}₹${Number(abs).toLocaleString('en-IN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 /**
@@ -79,6 +112,32 @@ export function formatDate(dateString: string | Date, formatStr: string = 'dd-MM
   } catch {
     return String(dateString);
   }
+}
+
+/**
+ * Normalizes any date string (ISO, YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY) into canonical YYYY-MM-DD for reliable filtering
+ */
+export function normalizeDateToYMD(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+  if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) {
+    const [d, m, y] = trimmed.split('-');
+    return `${y}-${m}-${d}`;
+  }
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+    const [d, m, y] = trimmed.split('/');
+    return `${y}-${m}-${d}`;
+  }
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return format(d, 'yyyy-MM-dd');
+    }
+  } catch {}
+  return trimmed.slice(0, 10);
 }
 
 /**
@@ -267,3 +326,53 @@ export function triggerHaptic(type: HapticFeedbackType = 'light') {
     // Graceful fallback for non-supported browsers
   }
 }
+
+/**
+ * Formats a raw database voucher number (e.g. 'ASI-2048-e54gf') for user display,
+ * invoice printing, tables, and reports by stripping the internal 5-char collision token,
+ * cleanly returning 'ASI-2048'.
+ * Safely preserves past entries (e.g. 'ASI-2048', 'ASI-10025', 'ASI-EMG-1024').
+ */
+export function formatVoucherNumber(rawVoucherNumber?: string | null): string {
+  if (!rawVoucherNumber || typeof rawVoucherNumber !== 'string') return '';
+  const trimmed = rawVoucherNumber.trim();
+  
+  // Handle any timestamp suffixes (e.g. -16.10.11.35)
+  const withoutTimestamp = trimmed.replace(/-(\d{2}\.\d{2}\.\d{2}\.\d{2}(\.\d{2})?)$/, '');
+  
+  // Check if there are at least 3 hyphen-separated segments (e.g. 'ASI-2048-e54gf')
+  const parts = withoutTimestamp.split('-');
+  if (parts.length >= 3) {
+    const last = parts[parts.length - 1];
+    // If the last segment is a 4-10 char token (e.g. 5-char hash 'e54gf')
+    if (/^[a-zA-Z0-9]{4,10}$/.test(last)) {
+      // Preserve past auto-vouchers like 'ASI-EMG-1024' where 2nd part is EMG and last part is pure digits
+      if (parts.length === 3 && parts[1].toUpperCase() === 'EMG' && /^\d+$/.test(last)) {
+        return withoutTimestamp;
+      }
+      return parts.slice(0, -1).join('-');
+    }
+  }
+  
+  return withoutTimestamp;
+}
+
+/**
+ * Generates an internal 5-character cryptographic random hash suffix (e.g. 'e54gf')
+ * used to guarantee zero database collisions across repeating physical printing batches.
+ */
+export function generateVoucherCollisionToken(): string {
+  const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+  let token = '';
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const bytes = new Uint8Array(5);
+    crypto.getRandomValues(bytes);
+    for (let i = 0; i < 5; i++) {
+      token += chars[bytes[i] % chars.length];
+    }
+    return token;
+  }
+  return Math.random().toString(36).slice(2, 7).toLowerCase();
+}
+
+

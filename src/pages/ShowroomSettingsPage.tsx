@@ -8,19 +8,16 @@ import {
   AccountingPeriod,
   CurrencyDenomination,
   AppRole,
-  RolePermissions,
-  Branch,
-  ExpenseCategory,
-  Department,
-  CourierPartner,
-  StaffMember,
+  RolePermissions,  StaffMember,
+  GstTaxRate,
 } from '@/types/database';
-import { formatINR, formatDate, cn } from '@/lib/utils';
+import { formatINR, formatDate, cn, triggerHaptic } from '@/lib/utils';
 import { MasterDataDrawer, MasterDrawerType } from '@/components/settings/MasterDataDrawer';
 import { useNotificationStore } from '@/store/notificationStore';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { toast, showToast } from '@/components/ui/ToastContainer';
+import { toast } from '@/components/ui/ToastContainer';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+
 import {
   Building2,
   Tags,
@@ -34,26 +31,14 @@ import {
   Edit2,
   FileSpreadsheet,
   Check,
-  Search,
-  Download,
-  Code2,
-  Terminal,
-  ChevronDown,
-  X,
+  Search,  X,
   Megaphone,
   Send,
   Trash2,
   Sparkles,
-  Shield,
-  Users,
-  Table as TableIcon,
-  RefreshCw,
-  LucideIcon,
-  Menu,
-  AlertCircle,
-  HandCoins,
-  ToggleLeft,
-  ToggleRight,
+  Shield,  Users,  RefreshCw,
+  LucideIcon,  HandCoins,  Percent,
+  Copy,
 } from 'lucide-react';
 
 export type SettingsTabId =
@@ -65,6 +50,7 @@ export type SettingsTabId =
   | 'staff'
   | 'roles'
   | 'denominations'
+  | 'gst_rates'
   | 'broadcasts'
   | 'features';
 
@@ -154,12 +140,20 @@ const SETTINGS_TABS: SettingsTabMeta[] = [
     description: 'Currency notes (₹500, ₹200, ₹100...) and coins for cash counting',
   },
   {
+    id: 'gst_rates',
+    name: 'GST Tax Slabs',
+    group: 'SHOWROOM MASTER DATA',
+    tableName: 'public.gst_tax_rates',
+    icon: Percent,
+    description: 'Active GST slabs (5%, 12%, 18%, 28%) for vendor tax invoices',
+  },
+  {
     id: 'broadcasts',
     name: 'Shop Announcements',
     group: 'SHOWROOM MASTER DATA',
     tableName: 'public.system_broadcasts',
     icon: Megaphone,
-    description: 'Show announcement banner to all counter terminals in real-time',
+    description: 'Show announcement banner to all showroom counters in real-time',
   },
   {
     id: 'features',
@@ -205,6 +199,7 @@ export const ShowroomSettingsPage: React.FC = () => {
   // Data Stores
   const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
   const [denominations, setDenominations] = useState<CurrencyDenomination[]>([]);
+  const [gstRates, setGstRates] = useState<GstTaxRate[]>([]);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [permissions, setPermissions] = useState<RolePermissions[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
@@ -220,7 +215,7 @@ export const ShowroomSettingsPage: React.FC = () => {
   const [lockReason, setLockReason] = useState('');
   const [isSubmittingLock, setIsSubmittingLock] = useState(false);
 
-  // Broadcast Composer State
+    // Broadcast Composer State
   const [broadcastBadge, setBroadcastBadge] = useState('NEW');
   const [broadcastMessage, setBroadcastMessage] = useState(broadcast?.message || '');
   const [broadcastLink, setBroadcastLink] = useState(broadcast?.link || '');
@@ -250,18 +245,20 @@ export const ShowroomSettingsPage: React.FC = () => {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [p, d, r, perms, stf] = await Promise.all([
+      const [p, d, r, perms, stf, g] = await Promise.all([
         erpService.getAccountingPeriods(),
         erpService.getCurrencyDenominations(),
         erpService.getAppRoles(),
         erpService.getAllRolePermissions(),
         erpService.getStaffMembers('ALL'),
+        erpService.getGstTaxRates(false),
       ]);
       setPeriods(p || []);
       setDenominations(d || []);
       setRoles(r || []);
       setPermissions(perms || []);
       setStaffMembers(stf || []);
+      setGstRates(g || []);
     } catch (err) {
       console.error('Failed to load master table records:', err);
     } finally {
@@ -304,6 +301,7 @@ export const ShowroomSettingsPage: React.FC = () => {
     () => ({
       brand: 1,
       print: 1,
+      overrides: 8,
       periods: periods.length,
       branches: branches.length,
       categories: categories.length,
@@ -312,10 +310,11 @@ export const ShowroomSettingsPage: React.FC = () => {
       staff: staffMembers.length,
       roles: roles.length,
       denominations: denominations.length,
+      gst_rates: gstRates.length,
       broadcasts: broadcast?.message ? 1 : 0,
       features: isStaffAdvanceBetaEnabled ? 1 : 0,
     }),
-    [periods, branches, categories, departments, couriers, staffMembers, roles, denominations, broadcast, isStaffAdvanceBetaEnabled]
+    [periods, branches, categories, departments, couriers, staffMembers, roles, denominations, gstRates, broadcast, isStaffAdvanceBetaEnabled]
   );
 
   // Handlers for Master Data Drawer
@@ -440,6 +439,73 @@ export const ShowroomSettingsPage: React.FC = () => {
     toast.info('Global broadcast banner cleared.');
   };
 
+  const [copiedGstSql, setCopiedGstSql] = useState(false);
+
+  const handleCopyGstSql = () => {
+    triggerHaptic();
+    const sql = `-- =============================================================================
+-- ASOPALAV ERP — GST TAX SLABS TABLE & DATA SEED FOR SUPABASE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.gst_tax_rates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rate_percent NUMERIC(5,2) NOT NULL UNIQUE,
+  rate_label TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  display_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Safely add missing columns if table was created manually in Supabase Dashboard
+ALTER TABLE public.gst_tax_rates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.gst_tax_rates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.gst_tax_rates ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0;
+ALTER TABLE public.gst_tax_rates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+
+ALTER TABLE public.gst_tax_rates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS \"Allow all access to gst_tax_rates\" ON public.gst_tax_rates;
+DROP POLICY IF EXISTS \"Allow read access to gst_tax_rates\" ON public.gst_tax_rates;
+DROP POLICY IF EXISTS \"Allow write access to gst_tax_rates\" ON public.gst_tax_rates;
+
+CREATE POLICY \"Allow all access to gst_tax_rates\"
+  ON public.gst_tax_rates FOR ALL
+  TO public, anon, authenticated, service_role
+  USING (true)
+  WITH CHECK (true);
+
+GRANT ALL ON public.gst_tax_rates TO anon, authenticated, service_role;
+
+INSERT INTO public.gst_tax_rates (rate_percent, rate_label, is_active, display_order)
+VALUES
+  (5.00, '5% (Fabric & Saree Alterations)', true, 1),
+  (12.00, '12% (Readymade Apparel & Packaging)', true, 2),
+  (18.00, '18% (Standard Services & Repairs)', true, 3),
+  (28.00, '28% (Luxury Goods & Special GTA)', true, 4)
+ON CONFLICT (rate_percent) DO UPDATE 
+SET rate_label = EXCLUDED.rate_label,
+    is_active = EXCLUDED.is_active,
+    display_order = EXCLUDED.display_order;
+`;
+    navigator.clipboard.writeText(sql);
+    setCopiedGstSql(true);
+    setTimeout(() => setCopiedGstSql(false), 2500);
+    toast.success('Setup code copied to clipboard!');
+  };
+
+  const handleToggleGstRate = async (rate: GstTaxRate) => {
+    const nextStatus = !rate.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    const ok = await erpService.toggleGstRateStatus(rate.id, nextStatus, userName, user?.role_code || 'Super_Admin');
+    if (ok) {
+      setGstRates((prev) => prev.map((r) => (r.id === rate.id ? { ...r, is_active: nextStatus } : r)));
+      toast.success(`${rate.rate_percent}% GST slab is now ${nextStatus ? 'Active (Visible in POS)' : 'Disabled (Hidden from App)'}`);
+    } else {
+      toast.error('Failed to update GST rate setting. Please try again.');
+    }
+  };
+
   const escapeCsvField = (value: string | number | boolean | null | undefined): string => {
     const str = String(value ?? '');
     // Escape spreadsheet formula injection characters
@@ -454,133 +520,7 @@ export const ShowroomSettingsPage: React.FC = () => {
   };
 
   // Export handlers
-  const handleExportCsv = () => {
-    let csvContent = '';
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `${currentTab.id}_export_${dateStr}.csv`;
-
-    switch (activeTabId) {
-      case 'periods':
-        csvContent =
-          'Period Key,Start Date,End Date,Status,Locked By,Lock Reason\n' +
-          periods
-            .map(
-              (p) =>
-                `${escapeCsvField(p.period_key)},${escapeCsvField(p.start_date)},${escapeCsvField(p.end_date)},${escapeCsvField(p.is_locked ? 'Locked' : 'Open')},${escapeCsvField(p.locked_by_name || '')},${escapeCsvField(p.lock_reason || '')}`
-            )
-            .join('\n');
-        break;
-      case 'branches':
-        csvContent =
-          'Branch Code,Branch Name,City,State,GSTIN,Min Cash,Max Cash,Max UPI,Status\n' +
-          branches
-            .map(
-              (b) =>
-                `${escapeCsvField(b.branch_code)},${escapeCsvField(b.branch_name)},${escapeCsvField(b.city)},${escapeCsvField(b.state)},${escapeCsvField(b.gstin || '')},${escapeCsvField(b.min_cash_threshold || 0)},${escapeCsvField(b.max_cash_ceiling || 0)},${escapeCsvField(b.max_upi_ceiling || 0)},${escapeCsvField(b.is_active ? 'Active' : 'Inactive')}`
-            )
-            .join('\n');
-        break;
-      case 'categories':
-        csvContent =
-          'Category Name,Color Theme,Status\n' +
-          categories
-            .map((c) => `${escapeCsvField(c.category_name)},${escapeCsvField(c.color_theme || '')},${escapeCsvField(c.is_active ? 'Active' : 'Inactive')}`)
-            .join('\n');
-        break;
-      case 'departments':
-        csvContent =
-          'Department Code,Department Name,Status\n' +
-          departments
-            .map((d) => `${escapeCsvField(d.department_code)},${escapeCsvField(d.department_name)},${escapeCsvField(d.is_active ? 'Active' : 'Inactive')}`)
-            .join('\n');
-        break;
-      case 'couriers':
-        csvContent =
-          'Partner Code,Partner Name,Contact Phone,Status\n' +
-          couriers
-            .map(
-              (cr) =>
-                `${escapeCsvField(cr.partner_code)},${escapeCsvField(cr.partner_name)},${escapeCsvField(cr.contact_phone || '')},${escapeCsvField(cr.is_active ? 'Active' : 'Inactive')}`
-            )
-            .join('\n');
-        break;
-      case 'staff':
-        csvContent =
-          'Staff Code,First Name,Last Name,Branch,Department,Designation,Mobile,Status\n' +
-          staffMembers
-            .map(
-              (s) =>
-                `${escapeCsvField(s.staff_code)},${escapeCsvField(s.first_name)},${escapeCsvField(s.last_name || '')},${escapeCsvField(s.branch_code || '')},${escapeCsvField(s.department_name || '')},${escapeCsvField(s.designation || '')},${escapeCsvField(s.mobile_number || '')},${escapeCsvField(s.is_active ? 'Active' : 'Inactive')}`
-            )
-            .join('\n');
-        break;
-      case 'roles':
-        csvContent =
-          'Role Code,Role Title,Description,System Role\n' +
-          roles
-            .map(
-              (r) =>
-                `${escapeCsvField(r.role_code)},${escapeCsvField(r.role_title)},${escapeCsvField(r.description || '')},${escapeCsvField(r.is_system_role ? 'Yes' : 'No')}`
-            )
-            .join('\n');
-        break;
-      case 'denominations':
-        csvContent =
-          'Value,Display Label,Type,Sort Order,Status\n' +
-          denominations
-            .map(
-              (dn) =>
-                `${escapeCsvField(dn.denomination_value)},${escapeCsvField(dn.display_label)},${escapeCsvField(dn.is_coin ? 'Coin' : 'Note')},${escapeCsvField(dn.sort_order)},${escapeCsvField(dn.is_active ? 'Active' : 'Inactive')}`
-            )
-            .join('\n');
-        break;
-      default:
-        csvContent = 'ID,Name\n';
-    }
-
-    downloadBlob(filename, csvContent, 'text/csv;charset=utf-8;');
-    toast.success(`Exported ${filename}`);
-  };
-
-  const handleExportJson = () => {
-    let data: any = [];
-    switch (activeTabId) {
-      case 'periods':
-        data = periods;
-        break;
-      case 'branches':
-        data = branches;
-        break;
-      case 'categories':
-        data = categories;
-        break;
-      case 'departments':
-        data = departments;
-        break;
-      case 'couriers':
-        data = couriers;
-        break;
-      case 'staff':
-        data = staffMembers;
-        break;
-      case 'roles':
-        data = roles;
-        break;
-      case 'denominations':
-        data = denominations;
-        break;
-      case 'broadcasts':
-        data = broadcast ? [broadcast] : [];
-        break;
-      default:
-        data = [];
-    }
-    const jsonStr = JSON.stringify(data, null, 2);
-    downloadBlob(`${currentTab.id}_schema.json`, jsonStr, 'application/json');
-    toast.success(`Exported JSON schema for ${currentTab.name}`);
-  };
-
-  // Filtering data rows
+      // Filtering data rows
   const filteredPeriods = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return periods.filter((p) => {
@@ -691,6 +631,19 @@ export const ShowroomSettingsPage: React.FC = () => {
     });
   }, [denominations, searchQuery, statusFilter]);
 
+  const filteredGstRates = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return gstRates.filter((g) => {
+      if (statusFilter === 'active' && !g.is_active) return false;
+      if (statusFilter === 'inactive' && g.is_active) return false;
+      if (!q) return true;
+      return (
+        g.rate_label.toLowerCase().includes(q) ||
+        g.rate_percent.toString().includes(q)
+      );
+    });
+  }, [gstRates, searchQuery, statusFilter]);
+
   const currentFilteredCount = useMemo(() => {
     switch (activeTabId) {
       case 'periods':
@@ -709,6 +662,8 @@ export const ShowroomSettingsPage: React.FC = () => {
         return filteredRoles.length;
       case 'denominations':
         return filteredDenominations.length;
+      case 'gst_rates':
+        return filteredGstRates.length;
       case 'broadcasts':
         return broadcast ? 1 : 0;
       default:
@@ -724,6 +679,7 @@ export const ShowroomSettingsPage: React.FC = () => {
     filteredStaff,
     filteredRoles,
     filteredDenominations,
+    filteredGstRates,
     broadcast,
     counts,
   ]);
@@ -738,6 +694,7 @@ export const ShowroomSettingsPage: React.FC = () => {
     'staff',
     'roles',
     'denominations',
+    'gst_rates',
   ].includes(activeTabId);
 
   // Density padding classes
@@ -872,36 +829,6 @@ export const ShowroomSettingsPage: React.FC = () => {
                     </button>
                   )}
 
-                  {/* Export Menu */}
-                  <div className="relative group z-20">
-                    <button
-                      type="button"
-                      className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#282828] bg-white dark:bg-[#1a1a1a] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Export</span>
-                      <ChevronDown className="w-3 h-3 text-slate-400" />
-                    </button>
-                    <div className="absolute right-0 top-full mt-1.5 w-36 bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] rounded-[6px] shadow-2xl py-1.5 hidden group-hover:block z-50 animate-in fade-in zoom-in-95 duration-150">
-                      <button
-                        type="button"
-                        onClick={handleExportCsv}
-                        className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                      >
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-[#3ecf8e]" />
-                        <span>CSV format</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleExportJson}
-                        className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                      >
-                        <Code2 className="w-3.5 h-3.5 text-amber-500" />
-                        <span>JSON format</span>
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Add Record Primary CTA */}
                   {currentTab.drawerType && (
                     <button
@@ -920,6 +847,7 @@ export const ShowroomSettingsPage: React.FC = () => {
 
           {/* Main Pane Body Container */}
           <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6 flex-1">
+
             {/* =================================================================== */}
             {/* VIEW 1: GLOBAL BROADCAST COMPOSER                                   */}
             {/* =================================================================== */}
@@ -934,22 +862,22 @@ export const ShowroomSettingsPage: React.FC = () => {
                       Global System Broadcast Banner
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-[#808080]">
-                      Broadcast real-time notices, closing alerts, or system maintenance messages to all counter terminals.
+                      Broadcast real-time notices, closing alerts, or system maintenance messages to all showroom counters.
                     </p>
                   </div>
                 </div>
 
-                {/* Terminal Preview */}
+                {/* Counter Preview */}
                 <div className="space-y-2">
                   <label className="text-xs font-mono text-slate-500 dark:text-[#808080] uppercase tracking-wider">
-                    Terminal Preview
+                    Counter Preview
                   </label>
                   <div className="flex items-center gap-3 px-4 py-2.5 rounded-[6px] bg-slate-50 dark:bg-[#121212] border border-slate-200 dark:border-[#2a2a2a] text-xs">
                     <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 font-mono text-[10px] font-semibold tracking-wider">
                       {isCustomBadge ? customBadge || 'CUSTOM' : broadcastBadge}
                     </span>
                     <span className="text-slate-900 dark:text-[#EDEDED] flex-1">
-                      {broadcastMessage || 'Showroom notice message will appear here for all counter terminals.'}
+                      {broadcastMessage || 'Showroom notice message will appear here for all showroom counters.'}
                     </span>
                   </div>
                 </div>
@@ -1058,7 +986,7 @@ export const ShowroomSettingsPage: React.FC = () => {
                             </span>
                           </div>
                           <p className="text-xs text-slate-500 dark:text-zinc-400 font-sans leading-relaxed max-w-xl">
-                            Enables employee petty cash requests, advance float disbursements, and salary deduction tracking. When deactivated, the Staff Advances page and navigation shortcuts are hidden from cashier terminals.
+                            Enables employee petty cash requests, advance float disbursements, and salary deduction tracking. When deactivated, the Staff Advances page and navigation shortcuts are hidden from cashier screens.
                           </p>
                         </div>
                       </div>
@@ -1190,6 +1118,57 @@ export const ShowroomSettingsPage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* GST Slabs Supabase Status Banner */}
+                {activeTabId === 'gst_rates' && (
+                  <div className="p-3.5 rounded-[8px] bg-slate-50 dark:bg-[#161618] border border-slate-200 dark:border-[#2e2e32] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-xs text-slate-900 dark:text-white">
+                          Live Cloud Sync Status
+                        </span>
+                        <span
+                          className={cn(
+                            'text-[10px] font-mono px-2 py-0.5 rounded-[4px] border font-medium inline-flex items-center gap-1',
+                            gstRates.length > 0 && !gstRates[0].id.startsWith('gst-')
+                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border-emerald-500/20'
+                              : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20'
+                          )}
+                        >
+                          {gstRates.length > 0 && !gstRates[0].id.startsWith('gst-')
+                            ? '● Connected & In Sync'
+                            : '⚠ Setup Required'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-[#A1A1A1]">
+                        {gstRates.length > 0 && !gstRates[0].id.startsWith('gst-')
+                          ? 'Changes made here sync instantly across all showroom counters.'
+                          : 'Tax configuration is pending initialization. Contact administrator.'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleCopyGstSql}
+                        className="px-3 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                        title="Copy setup configuration"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-[#171717]" />
+                        <span>{copiedGstSql ? 'Copied!' : 'Copy Setup Script'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={loadData}
+                        disabled={isLoading}
+                        className="p-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#202024] hover:bg-slate-100 dark:hover:bg-[#282828] text-slate-600 dark:text-[#A1A1A1] text-xs cursor-pointer"
+                        title="Check cloud records for updates"
+                      >
+                        <RefreshCw className={cn('w-3.5 h-3.5 text-[#3ecf8e]', isLoading && 'animate-spin')} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Data Grid View */}
                 <div className="bg-white dark:bg-[#1a1a1a] rounded-[12px] border border-slate-200 dark:border-[#242424] overflow-hidden shadow-xs">
                     {currentFilteredCount === 0 ? (
@@ -1293,6 +1272,16 @@ export const ShowroomSettingsPage: React.FC = () => {
                                   <th className={densityClasses}>Status</th>
                                 </>
                               )}
+
+                              {activeTabId === 'gst_rates' && (
+                                <>
+                                  <th className={densityClasses}>Tax Rate (%)</th>
+                                  <th className={densityClasses}>Slab Description / Category</th>
+                                  <th className={densityClasses}>Display Order</th>
+                                  <th className={densityClasses}>Status</th>
+                                  <th className={cn(densityClasses, 'text-right')}>Action</th>
+                                </>
+                              )}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
@@ -1348,7 +1337,7 @@ export const ShowroomSettingsPage: React.FC = () => {
                                   </td>
                                   <td className={densityClasses}>{b.gstin || '—'}</td>
                                   <td className={densityClasses}>
-                                    Max Cash: {formatINR(b.max_cash_ceiling || 25000)} | Safe Drop: {formatINR(b.min_cash_threshold || 3000)}
+                                    Max Cash: {formatINR(b.max_cash_ceiling || 25000)} | Min Float: {formatINR(b.min_cash_threshold || 3000)}
                                   </td>
                                   <td className={densityClasses}>
                                     <span
@@ -1478,7 +1467,7 @@ export const ShowroomSettingsPage: React.FC = () => {
 
                             {/* STAFF ROWS */}
                             {activeTabId === 'staff' &&
-                              filteredStaff.slice(0, 100).map((s) => (
+                              filteredStaff.map((s) => (
                                 <tr key={s.staff_code} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
                                   <td className={cn(densityClasses, 'font-semibold text-slate-900 dark:text-white')}>
                                     {s.staff_code}
@@ -1487,8 +1476,8 @@ export const ShowroomSettingsPage: React.FC = () => {
                                     {s.first_name} {s.last_name}
                                   </td>
                                   <td className={densityClasses}>{s.branch_code || 'ASI'}</td>
-                                  <td className={densityClasses}>{s.department_name || 'Showroom Sales'}</td>
-                                  <td className={densityClasses}>{s.designation || 'Sales Executive'}</td>
+                                  <td className={densityClasses}>{s.department_name || '—'}</td>
+                                  <td className={densityClasses}>{s.designation || '—'}</td>
                                   <td className={densityClasses}>
                                     <span
                                       className={cn(
@@ -1562,6 +1551,44 @@ export const ShowroomSettingsPage: React.FC = () => {
                                     >
                                       {dn.is_active ? 'Active' : 'Inactive'}
                                     </span>
+                                  </td>
+                                </tr>
+                              ))}
+
+                            {/* GST TAX SLABS ROWS */}
+                            {activeTabId === 'gst_rates' &&
+                              filteredGstRates.map((slab) => (
+                                <tr key={slab.id} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
+                                  <td className={cn(densityClasses, 'font-semibold font-mono text-slate-900 dark:text-white')}>
+                                    {slab.rate_percent}%
+                                  </td>
+                                  <td className={densityClasses}>{slab.rate_label}</td>
+                                  <td className={cn(densityClasses, 'font-mono text-xs')}>{slab.display_order}</td>
+                                  <td className={densityClasses}>
+                                    <span
+                                      className={cn(
+                                        'px-2 py-0.5 rounded-full text-[10px] font-mono inline-flex items-center gap-1',
+                                        slab.is_active
+                                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-[#3ecf8e]/30'
+                                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                                      )}
+                                    >
+                                      {slab.is_active ? 'Active (Visible in POS)' : 'Disabled (Hidden)'}
+                                    </span>
+                                  </td>
+                                  <td className={cn(densityClasses, 'text-right')}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleGstRate(slab)}
+                                      className={cn(
+                                        'px-2.5 py-1 text-xs font-medium rounded-[6px] transition-colors cursor-pointer border',
+                                        slab.is_active
+                                          ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                          : 'border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                      )}
+                                    >
+                                      {slab.is_active ? 'Disable Slab' : 'Enable Slab'}
+                                    </button>
                                   </td>
                                 </tr>
                               ))}
@@ -1721,7 +1748,7 @@ export const ShowroomSettingsPage: React.FC = () => {
                   Confirm Shop Announcement
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-[#888888]">
-                  This message will be broadcast live to all counter cashier terminals.
+                  This message will be broadcast live to all showroom counters.
                 </p>
               </div>
             </div>
@@ -1736,7 +1763,7 @@ export const ShowroomSettingsPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center py-1 border-b border-slate-200/60 dark:border-[#202020]">
                 <span className="text-slate-500 dark:text-[#888888]">Audience:</span>
-                <span className="font-medium text-slate-900 dark:text-white">All Showroom Counter Terminals</span>
+                <span className="font-medium text-slate-900 dark:text-white">All Showroom Counters</span>
               </div>
               <div className="space-y-1 py-1">
                 <span className="text-slate-500 dark:text-[#888888] block">Announcement Message:</span>

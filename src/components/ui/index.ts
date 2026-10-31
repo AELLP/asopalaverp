@@ -3,6 +3,7 @@ export * from './EmptyState';
 export * from './Kbd';
 export * from './MetricCard';
 export * from './DatePicker';
+export * from './DateRangePicker';
 export * from './SearchableSelect';
 export * from './SlideOverDrawer';
 export * from './AnimatedCounter';

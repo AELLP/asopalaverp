@@ -4,7 +4,6 @@ import { X, Maximize2, Minimize2 } from 'lucide-react';
 import { animateDrawerOpen, animateDrawerClose } from '@/lib/animations';
 import { useScrollLock } from '@/hooks/useScrollLock';
 import { useDeviceType } from '@/hooks/useDeviceType';
-import { useUIStore } from '@/store/uiStore';
 import { cn } from '@/lib/utils';
 
 export type DrawerSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '70' | 'full';
@@ -50,8 +49,7 @@ export const SlideOverDrawer: React.FC<SlideOverDrawerProps> = ({
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const { isSidebarCollapsed } = useUIStore();
-  const { isMobile, isTablet } = useDeviceType();
+    const { isMobile } = useDeviceType();
 
   useEffect(() => {
     setMounted(true);
@@ -95,7 +93,7 @@ export const SlideOverDrawer: React.FC<SlideOverDrawerProps> = ({
       {/* 1. Backdrop covering the ENTIRE viewport including sidebar and topbar */}
       <div
         ref={backdropRef}
-        className="fixed inset-0 bg-black/75 transition-opacity z-0"
+        className="fixed inset-0 bg-black/95 transition-opacity z-0"
         onClick={handleClose}
       />
 

@@ -1,19 +1,26 @@
-import gsap from 'gsap';
+/**
+ * ==============================================================================
+ * ASOPALAV ERP — ULTRA-LIGHTWEIGHT GPU-ACCELERATED HARDWARE ANIMATIONS
+ * ==============================================================================
+ * Powered 100% by the native W3C Web Animations API (element.animate) and GPU
+ * composited CSS transitions. Zero external animation bundle overhead (0 kB GSAP).
+ * ==============================================================================
+ */
 
 export const ANIM_CONFIG = {
   duration: {
-    fast: 0.15,
-    normal: 0.25,
-    smooth: 0.35,
-    counter: 0.6,
+    fast: 150,
+    normal: 250,
+    smooth: 350,
+    counter: 600,
   },
   ease: {
-    default: 'power2.out',
-    snappy: 'power3.out',
-    modal: 'back.out(1.15)',
-    in: 'power2.in',
-    smoothInOut: 'power2.inOut',
-    bounce: 'back.out(1.6)',
+    default: 'cubic-bezier(0.16, 1, 0.3, 1)', // power2.out equivalent
+    snappy: 'cubic-bezier(0.22, 1, 0.36, 1)', // power3.out equivalent
+    modal: 'cubic-bezier(0.34, 1.56, 0.64, 1)', // back.out(1.15) equivalent
+    in: 'cubic-bezier(0.7, 0, 0.84, 0)',
+    smoothInOut: 'cubic-bezier(0.45, 0, 0.55, 1)',
+    bounce: 'cubic-bezier(0.34, 1.7, 0.64, 1)',
   },
 };
 
@@ -22,54 +29,59 @@ export const ANIM_CONFIG = {
  */
 export function animatePageEntrance(target: HTMLElement | null, onComplete?: () => void) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { opacity: 0, y: -26 },
+  const anim = target.animate(
+    [
+      { opacity: 0, transform: 'translateY(-26px)' },
+      { opacity: 1, transform: 'translateY(0)' },
+    ],
     {
-      opacity: 1,
-      y: 0,
       duration: ANIM_CONFIG.duration.smooth,
-      ease: ANIM_CONFIG.ease.snappy,
-      clearProps: 'transform,opacity',
-      onComplete,
+      easing: ANIM_CONFIG.ease.snappy,
+      fill: 'forwards',
     }
   );
+  if (onComplete) anim.onfinish = onComplete;
 }
 
 /**
- * Animate page entrance from top downward (Start to Bottom)
+ * Animate page entrance from top downward
  */
 export function animatePageEntranceStartToBottom(target: HTMLElement | null, onComplete?: () => void) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { opacity: 0, y: -28 },
+  const anim = target.animate(
+    [
+      { opacity: 0, transform: 'translateY(-28px)' },
+      { opacity: 1, transform: 'translateY(0)' },
+    ],
     {
-      opacity: 1,
-      y: 0,
-      duration: 0.32,
-      ease: 'power3.out',
-      clearProps: 'transform,opacity',
-      onComplete,
+      duration: 320,
+      easing: ANIM_CONFIG.ease.snappy,
+      fill: 'forwards',
     }
   );
+  if (onComplete) anim.onfinish = onComplete;
 }
 
 /**
- * Animate page exit towards top (End to Top)
+ * Animate page exit towards top
  */
 export function animatePageExitEndToTop(target: HTMLElement | null, onComplete?: () => void) {
   if (!target) {
     if (onComplete) onComplete();
     return;
   }
-  gsap.to(target, {
-    opacity: 0,
-    y: -28,
-    duration: 0.18,
-    ease: 'power2.in',
-    onComplete,
-  });
+  const anim = target.animate(
+    [
+      { opacity: 1, transform: 'translateY(0)' },
+      { opacity: 0, transform: 'translateY(-28px)' },
+    ],
+    {
+      duration: 180,
+      easing: ANIM_CONFIG.ease.in,
+      fill: 'forwards',
+    }
+  );
+  if (onComplete) anim.onfinish = onComplete;
 }
 
 /**
@@ -77,23 +89,22 @@ export function animatePageExitEndToTop(target: HTMLElement | null, onComplete?:
  */
 export function animateModalOpen(modal: HTMLElement | null, backdrop?: HTMLElement | null) {
   if (backdrop) {
-    gsap.fromTo(
-      backdrop,
-      { opacity: 0 },
-      { opacity: 1, duration: ANIM_CONFIG.duration.normal, ease: ANIM_CONFIG.ease.default }
-    );
+    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: ANIM_CONFIG.duration.normal,
+      easing: 'ease-out',
+      fill: 'forwards',
+    });
   }
   if (modal) {
-    gsap.fromTo(
-      modal,
-      { scale: 0.95, opacity: 0, y: -8 },
+    modal.animate(
+      [
+        { opacity: 0, transform: 'scale(0.95) translateY(-8px)' },
+        { opacity: 1, transform: 'scale(1) translateY(0)' },
+      ],
       {
-        scale: 1,
-        opacity: 1,
-        y: 0,
         duration: ANIM_CONFIG.duration.normal,
-        ease: ANIM_CONFIG.ease.modal,
-        clearProps: 'transform',
+        easing: ANIM_CONFIG.ease.modal,
+        fill: 'forwards',
       }
     );
   }
@@ -107,17 +118,44 @@ export function animateModalClose(
   backdrop: HTMLElement | null | undefined,
   onComplete: () => void
 ) {
-  const tl = gsap.timeline({ onComplete });
+  let doneCount = 0;
+  const total = (backdrop ? 1 : 0) + (modal ? 1 : 0);
+  if (total === 0) {
+    onComplete();
+    return;
+  }
+
+  const checkDone = () => {
+    doneCount++;
+    if (doneCount >= total) onComplete();
+  };
+
   if (backdrop) {
-    tl.to(backdrop, { opacity: 0, duration: ANIM_CONFIG.duration.fast, ease: ANIM_CONFIG.ease.in }, 0);
+    const anim = backdrop.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: ANIM_CONFIG.duration.fast,
+      easing: ANIM_CONFIG.ease.in,
+      fill: 'forwards',
+    });
+    anim.onfinish = checkDone;
   }
   if (modal) {
-    tl.to(modal, { scale: 0.96, opacity: 0, y: -4, duration: ANIM_CONFIG.duration.fast, ease: ANIM_CONFIG.ease.in }, 0);
+    const anim = modal.animate(
+      [
+        { opacity: 1, transform: 'scale(1) translateY(0)' },
+        { opacity: 0, transform: 'scale(0.96) translateY(-4px)' },
+      ],
+      {
+        duration: ANIM_CONFIG.duration.fast,
+        easing: ANIM_CONFIG.ease.in,
+        fill: 'forwards',
+      }
+    );
+    anim.onfinish = checkDone;
   }
 }
 
 /**
- * Animate slide-over drawer entrance (Mobile: bottom sheet slide-up; Desktop/Tablet: right slide-in)
+ * Animate slide-over drawer entrance
  */
 export function animateDrawerOpen(
   drawer: HTMLElement | null,
@@ -125,43 +163,31 @@ export function animateDrawerOpen(
   isMobile: boolean = typeof window !== 'undefined' ? window.innerWidth < 768 : false
 ) {
   if (backdrop) {
-    gsap.fromTo(
-      backdrop,
-      { opacity: 0 },
-      { opacity: 1, duration: ANIM_CONFIG.duration.smooth, ease: ANIM_CONFIG.ease.default }
-    );
+    backdrop.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: ANIM_CONFIG.duration.smooth,
+      easing: 'ease-out',
+      fill: 'forwards',
+    });
   }
   if (drawer) {
-    if (isMobile) {
-      gsap.fromTo(
-        drawer,
-        { y: '100%', opacity: 0.9 },
-        {
-          y: '0%',
-          opacity: 1,
-          duration: ANIM_CONFIG.duration.smooth,
-          ease: ANIM_CONFIG.ease.snappy,
-          clearProps: 'transform',
-        }
-      );
-    } else {
-      gsap.fromTo(
-        drawer,
-        { x: '100%', opacity: 0.8 },
-        {
-          x: '0%',
-          opacity: 1,
-          duration: ANIM_CONFIG.duration.smooth,
-          ease: ANIM_CONFIG.ease.snappy,
-          clearProps: 'transform',
-        }
-      );
-    }
+    const fromTransform = isMobile ? 'translateY(100%)' : 'translateX(100%)';
+    const toTransform = isMobile ? 'translateY(0)' : 'translateX(0)';
+    drawer.animate(
+      [
+        { opacity: 0.8, transform: fromTransform },
+        { opacity: 1, transform: toTransform },
+      ],
+      {
+        duration: ANIM_CONFIG.duration.smooth,
+        easing: ANIM_CONFIG.ease.snappy,
+        fill: 'forwards',
+      }
+    );
   }
 }
 
 /**
- * Animate slide-over drawer exit (Mobile: slide-down; Desktop/Tablet: slide-right)
+ * Animate slide-over drawer exit
  */
 export function animateDrawerClose(
   drawer: HTMLElement | null,
@@ -169,39 +195,65 @@ export function animateDrawerClose(
   onComplete: () => void,
   isMobile: boolean = typeof window !== 'undefined' ? window.innerWidth < 768 : false
 ) {
-  const tl = gsap.timeline({ onComplete });
+  let doneCount = 0;
+  const total = (backdrop ? 1 : 0) + (drawer ? 1 : 0);
+  if (total === 0) {
+    onComplete();
+    return;
+  }
+
+  const checkDone = () => {
+    doneCount++;
+    if (doneCount >= total) onComplete();
+  };
+
   if (backdrop) {
-    tl.to(backdrop, { opacity: 0, duration: ANIM_CONFIG.duration.fast, ease: ANIM_CONFIG.ease.in }, 0);
+    const anim = backdrop.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: ANIM_CONFIG.duration.fast,
+      easing: ANIM_CONFIG.ease.in,
+      fill: 'forwards',
+    });
+    anim.onfinish = checkDone;
   }
   if (drawer) {
-    if (isMobile) {
-      tl.to(drawer, { y: '100%', opacity: 0.5, duration: ANIM_CONFIG.duration.normal, ease: 'power3.in' }, 0);
-    } else {
-      tl.to(drawer, { x: '100%', opacity: 0.5, duration: ANIM_CONFIG.duration.normal, ease: 'power3.in' }, 0);
-    }
+    const toTransform = isMobile ? 'translateY(100%)' : 'translateX(100%)';
+    const anim = drawer.animate(
+      [
+        { opacity: 1, transform: isMobile ? 'translateY(0)' : 'translateX(0)' },
+        { opacity: 0.5, transform: toTransform },
+      ],
+      {
+        duration: ANIM_CONFIG.duration.normal,
+        easing: ANIM_CONFIG.ease.in,
+        fill: 'forwards',
+      }
+    );
+    anim.onfinish = checkDone;
   }
 }
 
 /**
- * Stagger entrance of card elements (e.g. Bento cards, Search list, Matrix metrics)
+ * Stagger entrance of card elements
  */
 export function animateStaggerCards(container: HTMLElement | null, selector: string = '.stagger-item', stagger = 0.04) {
   if (!container) return;
-  const items = container.querySelectorAll(selector);
+  const items = container.querySelectorAll<HTMLElement>(selector);
   if (!items.length) return;
 
-  gsap.fromTo(
-    items,
-    { opacity: 0, y: 12 },
-    {
-      opacity: 1,
-      y: 0,
-      duration: ANIM_CONFIG.duration.smooth,
-      stagger,
-      ease: ANIM_CONFIG.ease.default,
-      clearProps: 'transform,opacity',
-    }
-  );
+  items.forEach((item, index) => {
+    item.animate(
+      [
+        { opacity: 0, transform: 'translateY(12px)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      {
+        duration: ANIM_CONFIG.duration.smooth,
+        delay: index * (stagger * 1000),
+        easing: ANIM_CONFIG.ease.default,
+        fill: 'forwards',
+      }
+    );
+  });
 }
 
 /**
@@ -209,21 +261,23 @@ export function animateStaggerCards(container: HTMLElement | null, selector: str
  */
 export function animateStaggerRows(container: HTMLElement | null, selector: string = 'tbody tr', stagger = 0.02) {
   if (!container) return;
-  const rows = container.querySelectorAll(selector);
+  const rows = container.querySelectorAll<HTMLElement>(selector);
   if (!rows.length) return;
 
-  gsap.fromTo(
-    rows,
-    { opacity: 0, y: 6 },
-    {
-      opacity: 1,
-      y: 0,
-      duration: ANIM_CONFIG.duration.normal,
-      stagger: Math.min(stagger, 0.03),
-      ease: ANIM_CONFIG.ease.default,
-      clearProps: 'transform,opacity',
-    }
-  );
+  rows.forEach((row, index) => {
+    row.animate(
+      [
+        { opacity: 0, transform: 'translateY(6px)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      {
+        duration: ANIM_CONFIG.duration.normal,
+        delay: Math.min(index * (stagger * 1000), 300),
+        easing: ANIM_CONFIG.ease.default,
+        fill: 'forwards',
+      }
+    );
+  });
 }
 
 /**
@@ -231,18 +285,19 @@ export function animateStaggerRows(container: HTMLElement | null, selector: stri
  */
 export function animateShake(target: HTMLElement | null) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { x: 0 },
+  target.animate(
+    [
+      { transform: 'translateX(0)' },
+      { transform: 'translateX(-8px)' },
+      { transform: 'translateX(8px)' },
+      { transform: 'translateX(-6px)' },
+      { transform: 'translateX(6px)' },
+      { transform: 'translateX(-3px)' },
+      { transform: 'translateX(0)' },
+    ],
     {
-      x: 8,
-      duration: 0.05,
-      repeat: 5,
-      yoyo: true,
-      ease: ANIM_CONFIG.ease.smoothInOut,
-      onComplete: () => {
-        gsap.set(target, { x: 0 });
-      },
+      duration: 320,
+      easing: 'ease-in-out',
     }
   );
 }
@@ -254,18 +309,28 @@ export function animateNumberCounter(
   target: HTMLElement | null,
   endValue: number,
   formatter?: (val: number) => string,
-  duration: number = ANIM_CONFIG.duration.counter
+  duration: number = 600
 ) {
   if (!target) return;
-  const obj = { val: 0 };
-  gsap.to(obj, {
-    val: endValue,
-    duration,
-    ease: 'power1.out',
-    onUpdate: () => {
-      target.textContent = formatter ? formatter(Math.round(obj.val)) : Math.round(obj.val).toLocaleString('en-IN');
-    },
-  });
+  const startVal = 0;
+  const startTime = performance.now();
+
+  const tick = (now: number) => {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const easeOut = 1 - Math.pow(1 - progress, 3);
+    const current = Math.round(startVal + (endValue - startVal) * easeOut);
+
+    target.textContent = formatter ? formatter(current) : current.toLocaleString('en-IN');
+
+    if (progress < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      target.textContent = formatter ? formatter(endValue) : endValue.toLocaleString('en-IN');
+    }
+  };
+
+  requestAnimationFrame(tick);
 }
 
 /**
@@ -273,32 +338,16 @@ export function animateNumberCounter(
  */
 export function animateErrorBanner(target: HTMLElement | null) {
   if (!target) return;
-  const tl = gsap.timeline();
-  tl.fromTo(
-    target,
-    { opacity: 0, y: -16, scale: 0.98 },
+  target.animate(
+    [
+      { opacity: 0, transform: 'translateY(-16px) scale(0.98)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ],
     {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      duration: 0.28,
-      ease: 'back.out(1.4)',
-      clearProps: 'transform',
+      duration: 280,
+      easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)',
+      fill: 'forwards',
     }
-  ).fromTo(
-    target,
-    { x: 0 },
-    {
-      x: 6,
-      duration: 0.05,
-      repeat: 4,
-      yoyo: true,
-      ease: 'power1.inOut',
-      onComplete: () => {
-        gsap.set(target, { x: 0 });
-      },
-    },
-    '-=0.08'
   );
 }
 
@@ -307,16 +356,15 @@ export function animateErrorBanner(target: HTMLElement | null) {
  */
 export function animateSuccessBanner(target: HTMLElement | null) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { opacity: 0, scale: 0.94, y: -8 },
+  target.animate(
+    [
+      { opacity: 0, transform: 'translateY(-8px) scale(0.94)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ],
     {
-      opacity: 1,
-      scale: 1,
-      y: 0,
-      duration: 0.35,
-      ease: 'back.out(1.5)',
-      clearProps: 'transform',
+      duration: 320,
+      easing: 'cubic-bezier(0.34, 1.5, 0.64, 1)',
+      fill: 'forwards',
     }
   );
 }
@@ -326,16 +374,15 @@ export function animateSuccessBanner(target: HTMLElement | null) {
  */
 export function animateStamp(target: HTMLElement | null) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { opacity: 0, scale: 1.8, rotation: -12 },
+  target.animate(
+    [
+      { opacity: 0, transform: 'scale(1.8) rotate(-12deg)' },
+      { opacity: 1, transform: 'scale(1) rotate(0deg)' },
+    ],
     {
-      opacity: 1,
-      scale: 1,
-      rotation: 0,
-      duration: 0.4,
-      ease: 'back.out(1.8)',
-      clearProps: 'transform',
+      duration: 380,
+      easing: 'cubic-bezier(0.34, 1.8, 0.64, 1)',
+      fill: 'forwards',
     }
   );
 }
@@ -343,13 +390,10 @@ export function animateStamp(target: HTMLElement | null) {
 /**
  * Animate smooth progress bar fill
  */
-export function animateProgressBar(target: HTMLElement | null, percentage: number, duration: number = 0.4) {
+export function animateProgressBar(target: HTMLElement | null, percentage: number, duration: number = 400) {
   if (!target) return;
-  gsap.to(target, {
-    width: `${Math.min(Math.max(percentage, 0), 100)}%`,
-    duration,
-    ease: 'power2.out',
-  });
+  target.style.transition = `width ${duration}ms cubic-bezier(0.16, 1, 0.3, 1)`;
+  target.style.width = `${Math.min(Math.max(percentage, 0), 100)}%`;
 }
 
 /**
@@ -357,14 +401,14 @@ export function animateProgressBar(target: HTMLElement | null, percentage: numbe
  */
 export function animateRowHighlight(target: HTMLElement | null) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { backgroundColor: 'rgba(62, 207, 142, 0.25)' },
+  target.animate(
+    [
+      { backgroundColor: 'rgba(62, 207, 142, 0.25)' },
+      { backgroundColor: 'transparent' },
+    ],
     {
-      backgroundColor: 'transparent',
-      duration: 1.6,
-      ease: 'power2.out',
-      clearProps: 'backgroundColor',
+      duration: 1500,
+      easing: 'ease-out',
     }
   );
 }
@@ -374,18 +418,17 @@ export function animateRowHighlight(target: HTMLElement | null) {
  */
 export function animateToast(target: HTMLElement | null) {
   if (!target) return;
-  gsap.fromTo(
-    target,
-    { opacity: 0, y: 20, scale: 0.9 },
+  target.animate(
+    [
+      { opacity: 0, transform: 'translateY(20px) scale(0.9)' },
+      { opacity: 1, transform: 'translateY(0) scale(1)' },
+    ],
     {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      duration: 0.25,
-      ease: 'power3.out',
-      clearProps: 'transform',
+      duration: 250,
+      easing: ANIM_CONFIG.ease.snappy,
+      fill: 'forwards',
     }
   );
 }
 
-export default gsap;
+export default null;

@@ -19,8 +19,8 @@ export default {
         canvas: {
           DEFAULT: '#ffffff',
           soft: '#fafafa',
-          night: '#141414',
-          'night-soft': '#171717',
+          night: '#000000',
+          'night-soft': '#080808',
         },
         surface: {
           card: '#ffffff',

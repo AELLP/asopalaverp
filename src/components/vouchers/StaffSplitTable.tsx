@@ -1,7 +1,7 @@
 import React from 'react';
 import { StaffMember, ExpenseCategory, Department } from '@/types/database';
-import { Plus, Trash2, Users, Calculator, UserCheck } from 'lucide-react';
-import { formatINR, cn } from '@/lib/utils';
+import { Plus, Trash2, Users, Calculator } from 'lucide-react';
+import { formatINR } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 
 export interface SplitItem {
@@ -53,14 +53,18 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
           `${s.first_name} ${s.last_name}`.trim().toLowerCase() === value.trim().toLowerCase()
       );
       if (selected) {
-        updated[index].staffCode = selected.staff_code;
-        updated[index].staffName = `${selected.first_name} ${selected.last_name}`.trim();
-        if (selected.department_name) {
-          updated[index].departmentName = selected.department_name;
-        }
+        updated[index] = {
+          ...updated[index],
+          staffCode: selected.staff_code,
+          staffName: `${selected.first_name} ${selected.last_name}`.trim(),
+          departmentName: selected.department_name || updated[index].departmentName || '',
+        };
       } else {
-        updated[index].staffCode = value;
-        updated[index].staffName = value;
+        updated[index] = {
+          ...updated[index],
+          staffCode: '',
+          staffName: '',
+        };
       }
     } else {
       updated[index] = { ...updated[index], [field]: value };
@@ -168,7 +172,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                       subLabel: s.department_name || undefined,
                     }))}
                     placeholder="Select staff member..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -181,7 +185,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                       label: d.department_name,
                     }))}
                     placeholder="Select department..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -194,7 +198,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                       label: c.category_name,
                     }))}
                     placeholder="Select category..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -266,7 +270,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                       subLabel: s.department_name || undefined,
                     }))}
                     placeholder="Select staff member..."
-                    allowCustom={true}
+                    allowCustom={false}
                   />
                 </div>
 
@@ -283,7 +287,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                         label: d.department_name,
                       }))}
                       placeholder="Select dept..."
-                      allowCustom={true}
+                      allowCustom={false}
                     />
                   </div>
 
@@ -299,7 +303,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
                         label: c.category_name,
                       }))}
                       placeholder="Select cat..."
-                      allowCustom={true}
+                      allowCustom={false}
                     />
                   </div>
                 </div>
@@ -345,7 +349,7 @@ export const StaffSplitTable: React.FC<StaffSplitTableProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-slate-500 dark:text-zinc-400 font-medium font-sans">Split Total:</span>
             <span className="px-2.5 py-1 rounded-[4px] bg-white dark:bg-[#1f1f1f] border border-slate-200 dark:border-[#2e2e2e] text-xs font-semibold font-mono tabular-nums text-emerald-600 dark:text-[#3ecf8e]">
-              ₹ {formatINR(totalSplitAmount)}
+              {formatINR(totalSplitAmount)}
             </span>
           </div>
         </div>

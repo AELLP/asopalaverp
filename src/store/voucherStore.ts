@@ -38,9 +38,9 @@ interface VoucherStoreState {
 let masterDataInFlight: Promise<void> | null = null;
 const vouchersInFlight: Record<string, Promise<void> | null> = {};
 
-// Cache duration: 10 minutes for master data, 2 minutes for vouchers
+// Cache duration: 10 minutes for master data, 10 minutes for vouchers (synchronized via Realtime)
 const MASTER_CACHE_TTL = 10 * 60 * 1000;
-const VOUCHERS_CACHE_TTL = 2 * 60 * 1000;
+const VOUCHERS_CACHE_TTL = 10 * 60 * 1000;
 
 export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
   vouchers: {},
@@ -190,10 +190,14 @@ export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
       const canonicalBranchKey = normalizeBranchId(voucher.branch_id);
       const allKey = 'ALL';
 
+      const isSameVoucher = (v: ExpenseVoucher) =>
+        v.voucher_number === voucher.voucher_number &&
+        (!voucher.branch_id || !v.branch_id || normalizeBranchCode(v.branch_code || v.branch_id) === code);
+
       const updateList = (list?: ExpenseVoucher[]) => {
         if (!list) return [voucher];
-        if (list.some((v) => v.voucher_number === voucher.voucher_number)) {
-          return list.map((v) => (v.voucher_number === voucher.voucher_number ? voucher : v));
+        if (list.some(isSameVoucher)) {
+          return list.map((v) => (isSameVoucher(v) ? voucher : v));
         }
         return [voucher, ...list];
       };
@@ -216,9 +220,13 @@ export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
       const canonicalBranchKey = normalizeBranchId(voucher.branch_id);
       const allKey = 'ALL';
 
+      const isSameVoucher = (v: ExpenseVoucher) =>
+        v.voucher_number === voucher.voucher_number &&
+        (!voucher.branch_id || !v.branch_id || normalizeBranchCode(v.branch_code || v.branch_id) === code);
+
       const updateList = (list?: ExpenseVoucher[]) => {
         if (!list) return [voucher];
-        return list.map((v) => (v.voucher_number === voucher.voucher_number ? { ...v, ...voucher } : v));
+        return list.map((v) => (isSameVoucher(v) ? { ...v, ...voucher } : v));
       };
 
       return {
@@ -236,9 +244,16 @@ export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
   removeVoucherLocally: (voucherNumber: string, branchId?: string) => {
     set((state) => {
       const allKey = 'ALL';
+      const targetCode = branchId ? normalizeBranchCode(branchId) : null;
       const filterList = (list?: ExpenseVoucher[]) => {
         if (!list) return [];
-        return list.filter((v) => v.voucher_number !== voucherNumber);
+        return list.filter(
+          (v) =>
+            !(
+              v.voucher_number === voucherNumber &&
+              (!targetCode || !v.branch_id || normalizeBranchCode(v.branch_code || v.branch_id) === targetCode)
+            )
+        );
       };
 
       const updatedVouchers: Record<string, ExpenseVoucher[]> = {

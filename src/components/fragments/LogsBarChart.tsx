@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { format, subMinutes, addMinutes } from 'date-fns';
 import { ExpenseVoucher } from '@/types/database';
 import { cn, formatINR } from '@/lib/utils';
-import { Radio, Receipt, Wallet, HandCoins, ShieldCheck } from 'lucide-react';
+import { Receipt, Wallet, HandCoins, ShieldCheck } from 'lucide-react';
 
 export interface TelemetryMetrics {
   totalSpend: number;
@@ -48,8 +48,8 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
   // 26 Time slots spanning the active showroom trading session
   const now = useMemo(() => new Date(), []);
   const startTime = useMemo(() => subMinutes(now, 52), [now]);
-  const startTimeStr = useMemo(() => format(startTime, 'MMM dd, h:mmaaa'), [startTime]);
-  const endTimeStr = useMemo(() => format(now, 'MMM dd, h:mmaaa'), [now]);
+  const startTimeStr = useMemo(() => format(startTime, 'd MMM, h:mm a'), [startTime]);
+  const endTimeStr = useMemo(() => format(now, 'd MMM, h:mm a'), [now]);
 
   const numSlots = 26;
 
@@ -62,7 +62,7 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
       for (let i = 0; i < numSlots; i++) {
         const slotTime = addMinutes(startTime, i * 2);
         slots.push({
-          timeStr: format(slotTime, 'MMM dd, h:mmaaa'),
+          timeStr: format(slotTime, 'd MMM, h:mm a'),
           infos: 0,
           warnings: 0,
           errors: 0,
@@ -154,9 +154,9 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
 
       return [
         {
-          id: 'upi-bank',
-          serviceName: 'UPI & BANK SPENT',
-          subLabel: 'Online QR & Bank Transfers',
+          id: 'upi-online',
+          serviceName: 'UPI & ONLINE SPENT',
+          subLabel: 'Online QR & UPI Transfers',
           value: formatINR(metrics.upiPaid),
           warningCount: highUpiVouchers.length,
           errorCount: upiErrors,
@@ -166,8 +166,8 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
         },
         {
           id: 'upi-high-value',
-          serviceName: 'HIGH BANK VOUCHERS (>₹10K)',
-          subLabel: 'NEFT / RTGS / Bank Disbursals',
+          serviceName: 'HIGH VALUE VOUCHERS (>₹10K)',
+          subLabel: 'Digital UPI Disbursals',
           value: formatINR(highUpiTotal),
           warningCount: highUpiVouchers.length,
           errorCount: 0,
@@ -220,9 +220,9 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
         icon: Wallet,
       },
       {
-        id: 'upi-bank',
-        serviceName: 'UPI & BANK PAYMENTS',
-        subLabel: 'Online QR & Bank Transfers',
+        id: 'upi-online',
+        serviceName: 'UPI & ONLINE PAYMENTS',
+        subLabel: 'Online QR & UPI Transfers',
         value: formatINR(metrics.upiPaid),
         warningCount: vouchers.filter((v) => v.payment_method === 'Online_UPI' && Number(v.total_amount) > 10000).length,
         errorCount: vouchers.filter((v) => v.payment_method === 'Online_UPI' && v.status === 'Voided').length,
@@ -243,33 +243,28 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
               key={card.id}
               className="p-4 sm:p-5 rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] space-y-3.5 shadow-xs transition-all hover:border-slate-300 dark:hover:border-[#333333] relative group"
             >
-              {/* TOP HEADER: SERVICE NAME + WARNINGS & ERRORS */}
+              {/* TOP HEADER: SERVICE NAME + ACTIVITY STATUS */}
               <div className="flex items-start justify-between">
                 <div className="text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-zinc-400 font-medium truncate pr-2">
                   {card.serviceName}
                 </div>
 
-                <div className="flex items-center gap-4 text-xs font-mono tracking-wider shrink-0">
-                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-zinc-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]" />
-                    <span>WARNINGS</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-zinc-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#ef4444]" />
-                    <span>ERRORS</span>
-                  </div>
+                <div className="flex items-center gap-2 text-xs font-mono tracking-wider shrink-0">
+                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-[#3ecf8e] font-medium bg-emerald-500/10 px-2 py-0.5 rounded-[4px] border border-emerald-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf8e] animate-pulse" />
+                    <span>Live</span>
+                  </span>
                 </div>
               </div>
 
-              {/* SECOND ROW: BIG MONOSPACE TABULAR NUMBER + ALIGNED COUNTS */}
+              {/* SECOND ROW: BIG MONOSPACE TABULAR NUMBER + BILLS COUNT */}
               <div className="flex items-baseline justify-between">
                 <div className="text-3xl font-mono font-medium tabular-nums text-slate-900 dark:text-white tracking-tight">
                   {card.value}
                 </div>
 
-                <div className="flex items-center gap-4 text-base font-mono tabular-nums text-slate-700 dark:text-zinc-300 font-medium shrink-0">
-                  <span className="w-16 text-right">{card.warningCount}</span>
-                  <span className="w-12 text-right">{card.errorCount}</span>
+                <div className="text-xs font-mono tabular-nums text-slate-500 dark:text-zinc-400 font-medium shrink-0">
+                  {card.slots.reduce((acc, s) => acc + s.total, 0)} bills
                 </div>
               </div>
 
@@ -286,10 +281,7 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
                         : 0;
 
                     // Proportions for stacked segments
-                    const errorPct = slot.total > 0 ? (slot.errors / slot.total) * totalHeightPct : 0;
-                    const warningPct = slot.total > 0 ? (slot.warnings / slot.total) * totalHeightPct : 0;
-                    const infoPct = slot.total > 0 ? (slot.infos / slot.total) * totalHeightPct : 0;
-
+                                                            
                     return (
                       <div
                         key={sIdx}
@@ -305,43 +297,17 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
                       >
                         {slot.total > 0 ? (
                           <div
-                            className="w-full flex flex-col justify-end rounded-t-[1px] overflow-hidden transition-all duration-150"
+                            className="w-full flex flex-col justify-end rounded-t-[2px] overflow-hidden transition-all duration-150"
                             style={{ height: `${totalHeightPct}%` }}
                           >
-                            {/* Emerald Info Segment (Top) */}
-                            {infoPct > 0 && (
-                              <div
-                                style={{ height: `${(infoPct / totalHeightPct) * 100}%` }}
-                                className={cn(
-                                  'w-full transition-colors',
-                                  isHovered
-                                    ? 'bg-[#3ecf8e]'
-                                    : 'bg-[#00623e] dark:bg-[#08633f] hover:bg-[#3ecf8e]'
-                                )}
-                              />
-                            )}
-
-                            {/* Amber Warning Segment (Middle) */}
-                            {warningPct > 0 && (
-                              <div
-                                style={{ height: `${(warningPct / totalHeightPct) * 100}%` }}
-                                className={cn(
-                                  'w-full transition-colors',
-                                  isHovered ? 'bg-[#fbbf24]' : 'bg-[#b45309]'
-                                )}
-                              />
-                            )}
-
-                            {/* Red Error Segment (Bottom) */}
-                            {errorPct > 0 && (
-                              <div
-                                style={{ height: `${(errorPct / totalHeightPct) * 100}%` }}
-                                className={cn(
-                                  'w-full transition-colors',
-                                  isHovered ? 'bg-[#f87171]' : 'bg-[#ef4444]'
-                                )}
-                              />
-                            )}
+                            <div
+                              className={cn(
+                                'w-full h-full transition-colors rounded-t-[2px]',
+                                isHovered
+                                  ? 'bg-[#3ecf8e]'
+                                  : 'bg-[#15803d] dark:bg-[#10b981]/70 hover:bg-[#3ecf8e]'
+                              )}
+                            />
                           </div>
                         ) : (
                           // Grounding subtle baseline dot for empty slots
@@ -359,46 +325,22 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
                       left: `${Math.max(8, Math.min(92, ((hoveredSlotIndex + 0.5) / card.slots.length) * 100))}%`,
                       bottom: '102%',
                     }}
-                    className="absolute -translate-x-1/2 z-30 pointer-events-none p-2.5 rounded-[6px] bg-[#1c1c1c] border border-[#333333] shadow-2xl space-y-1.5 min-w-[140px]"
+                    className="absolute -translate-x-1/2 z-30 pointer-events-none p-2.5 rounded-[6px] bg-white dark:bg-[#1c1c1c] border border-slate-200 dark:border-[#333333] shadow-2xl space-y-1.5 min-w-[140px]"
                   >
-                    <div className="text-[10px] font-mono text-zinc-400 font-medium pb-1 border-b border-[#2e2e2e]">
+                    <div className="text-[10px] font-mono text-slate-500 dark:text-zinc-400 font-medium pb-1 border-b border-slate-100 dark:border-[#2e2e2e]">
                       {card.slots[hoveredSlotIndex].timeStr}
                     </div>
 
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs gap-3">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-[1px] bg-[#3ecf8e] shrink-0" />
-                          <span className="text-[11px] font-sans text-zinc-300">Settled</span>
-                        </div>
-                        <span className="text-[11px] font-mono font-medium text-white tabular-nums">
-                          {card.slots[hoveredSlotIndex].infos} bills
+                    <div className="flex items-center justify-between text-xs gap-3 pt-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-[#3ecf8e] shrink-0" />
+                        <span className="text-[11px] font-sans text-slate-700 dark:text-zinc-300">
+                          {card.slots[hoveredSlotIndex].total} {card.slots[hoveredSlotIndex].total === 1 ? 'bill' : 'bills'}
                         </span>
                       </div>
-
-                      {card.slots[hoveredSlotIndex].warnings > 0 && (
-                        <div className="flex items-center justify-between text-xs gap-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-[1px] bg-[#f59e0b] shrink-0" />
-                            <span className="text-[11px] font-sans text-zinc-300">High-Ticket</span>
-                          </div>
-                          <span className="text-[11px] font-mono font-medium text-white tabular-nums">
-                            {card.slots[hoveredSlotIndex].warnings}
-                          </span>
-                        </div>
-                      )}
-
-                      {card.slots[hoveredSlotIndex].errors > 0 && (
-                        <div className="flex items-center justify-between text-xs gap-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-[1px] bg-[#ef4444] shrink-0" />
-                            <span className="text-[11px] font-sans text-zinc-300">Voided</span>
-                          </div>
-                          <span className="text-[11px] font-mono font-medium text-white tabular-nums">
-                            {card.slots[hoveredSlotIndex].errors}
-                          </span>
-                        </div>
-                      )}
+                      <span className="text-[11px] font-mono font-semibold text-emerald-600 dark:text-[#3ecf8e] tabular-nums">
+                        {formatINR(card.slots[hoveredSlotIndex].amount)}
+                      </span>
                     </div>
                   </div>
                 )}

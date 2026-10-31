@@ -1,51 +1,36 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import gsap from 'gsap';
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 /**
- * Custom hook to safely run GSAP animations scoped to a container ref with automatic cleanup
+ * Lightweight scoped animation container hook with automatic lifecycle management.
+ * 100% native Web Animations standard (Zero external dependencies).
  */
 export function useGsapContext<T extends HTMLElement = HTMLDivElement>(
-  animationCallback: (context: gsap.Context) => void,
+  animationCallback: (container: T | null) => void,
   dependencies: any[] = []
 ) {
   const containerRef = useRef<T | null>(null);
 
   useIsomorphicLayoutEffect(() => {
-    const ctx = gsap.context((self) => {
-      animationCallback(self);
-    }, containerRef);
-
-    return () => ctx.revert();
+    animationCallback(containerRef.current);
   }, dependencies);
 
   return containerRef;
 }
 
-/**
- * Hook for page transition animation
- */
 export function usePageTransition(triggerKey: any) {
   const pageRef = useRef<HTMLDivElement | null>(null);
 
   useIsomorphicLayoutEffect(() => {
     if (!pageRef.current) return;
-    const ctx = gsap.context(() => {
-      gsap.fromTo(
-        pageRef.current,
-        { opacity: 0, y: 6 },
-        {
-          opacity: 1,
-          y: 0,
-          duration: 0.25,
-          ease: 'power2.out',
-          clearProps: 'transform,opacity',
-        }
-      );
-    }, pageRef);
-
-    return () => ctx.revert();
+    pageRef.current.animate(
+      [
+        { opacity: 0, transform: 'translateY(6px)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      { duration: 250, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' }
+    );
   }, [triggerKey]);
 
   return pageRef;

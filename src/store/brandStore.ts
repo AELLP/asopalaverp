@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 
 export interface BrandSettings {
   brandName: string;
@@ -96,37 +95,9 @@ export const useBrandStore = create<BrandState>((set, get) => ({
   },
 
   fetchBrandSettings: async () => {
-    try {
-      const { data, error } = await supabase.from('brand_settings').select('*').limit(1).maybeSingle();
-      if (!error && data) {
-        const remoteSettings: Partial<BrandSettings> = {
-          brandName: data.brand_name || DEFAULT_BRAND_SETTINGS.brandName,
-          legalEntityName: data.legal_entity_name || DEFAULT_BRAND_SETTINGS.legalEntityName,
-          tagline: data.tagline || DEFAULT_BRAND_SETTINGS.tagline,
-          logoUrl: data.logo_url || DEFAULT_BRAND_SETTINGS.logoUrl,
-          logoType: data.logo_type || DEFAULT_BRAND_SETTINGS.logoType,
-          brandSvgContent: data.brand_svg_content || DEFAULT_BRAND_SETTINGS.brandSvgContent,
-          monogramText: data.monogram_text || DEFAULT_BRAND_SETTINGS.monogramText,
-          faviconUrl: data.favicon_url || DEFAULT_BRAND_SETTINGS.faviconUrl,
-          brandAccentColor: data.brand_accent_color || DEFAULT_BRAND_SETTINGS.brandAccentColor,
-          gstin: data.gstin || DEFAULT_BRAND_SETTINGS.gstin,
-          panNumber: data.pan_number || DEFAULT_BRAND_SETTINGS.panNumber,
-          contactPhone: data.contact_phone || DEFAULT_BRAND_SETTINGS.contactPhone,
-          contactEmail: data.contact_email || DEFAULT_BRAND_SETTINGS.contactEmail,
-          address: data.address || DEFAULT_BRAND_SETTINGS.address,
-          city: data.city || DEFAULT_BRAND_SETTINGS.city,
-          state: data.state || DEFAULT_BRAND_SETTINGS.state,
-        };
-        set(remoteSettings);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...get(), ...remoteSettings }));
-        }
-        get().applyBrandToDocument();
-      }
-    } catch {
-      // Fallback to local storage
-      get().applyBrandToDocument();
-    }
+    // Brand settings are maintained locally via DEFAULT_BRAND_SETTINGS and localStorage.
+    // Avoid firing phantom queries to non-existent remote table to eliminate 404 console errors.
+    get().applyBrandToDocument();
   },
 
   updateBrandSettings: async (updates: Partial<BrandSettings>) => {
@@ -138,32 +109,6 @@ export const useBrandStore = create<BrandState>((set, get) => ({
     }
 
     get().applyBrandToDocument();
-
-    // Background sync to database if table exists
-    try {
-      await supabase.from('brand_settings').upsert({
-        id: 'brand-singleton',
-        brand_name: newState.brandName,
-        legal_entity_name: newState.legalEntityName,
-        tagline: newState.tagline,
-        logo_url: newState.logoUrl,
-        logo_type: newState.logoType,
-        brand_svg_content: newState.brandSvgContent,
-        monogram_text: newState.monogramText,
-        favicon_url: newState.faviconUrl,
-        brand_accent_color: newState.brandAccentColor,
-        gstin: newState.gstin,
-        pan_number: newState.panNumber,
-        contact_phone: newState.contactPhone,
-        contact_email: newState.contactEmail,
-        address: newState.address,
-        city: newState.city,
-        state: newState.state,
-        updated_at: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.warn('Brand settings synced locally:', err);
-    }
   },
 
   resetToDefaults: async () => {
@@ -172,30 +117,5 @@ export const useBrandStore = create<BrandState>((set, get) => ({
       localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_BRAND_SETTINGS));
     }
     get().applyBrandToDocument();
-
-    try {
-      await supabase.from('brand_settings').upsert({
-        id: 'brand-singleton',
-        brand_name: DEFAULT_BRAND_SETTINGS.brandName,
-        legal_entity_name: DEFAULT_BRAND_SETTINGS.legalEntityName,
-        tagline: DEFAULT_BRAND_SETTINGS.tagline,
-        logo_url: DEFAULT_BRAND_SETTINGS.logoUrl,
-        logo_type: DEFAULT_BRAND_SETTINGS.logoType,
-        brand_svg_content: DEFAULT_BRAND_SETTINGS.brandSvgContent,
-        monogram_text: DEFAULT_BRAND_SETTINGS.monogramText,
-        favicon_url: DEFAULT_BRAND_SETTINGS.faviconUrl,
-        brand_accent_color: DEFAULT_BRAND_SETTINGS.brandAccentColor,
-        gstin: DEFAULT_BRAND_SETTINGS.gstin,
-        pan_number: DEFAULT_BRAND_SETTINGS.panNumber,
-        contact_phone: DEFAULT_BRAND_SETTINGS.contactPhone,
-        contact_email: DEFAULT_BRAND_SETTINGS.contactEmail,
-        address: DEFAULT_BRAND_SETTINGS.address,
-        city: DEFAULT_BRAND_SETTINGS.city,
-        state: DEFAULT_BRAND_SETTINGS.state,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {
-      // local reset
-    }
   },
 }));

@@ -1,62 +1,25 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useScrollLock } from '@/hooks/useScrollLock';
-import { useUIStore } from '@/store/uiStore';
-import { useAuthStore } from '@/store/authStore';
+import { useUIStore, PageId } from '@/store/uiStore';
+import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
 import { searchEngine, SearchResultItem, SearchCategory } from '@/lib/searchEngine';
-import { formatINR, formatDate, cn } from '@/lib/utils';
-import { animateModalOpen, animateModalClose, animateStaggerCards } from '@/lib/animations';
+import { formatINR, formatVoucherNumber, cn } from '@/lib/utils';
+import { animateModalOpen, animateModalClose } from '@/lib/animations';
 import {
   Search,
   Receipt,
-  Users,
-  Building2,
-  Plus,
-  HandCoins,
+  Users,  HandCoins,
   ShieldAlert,
   ShieldCheck,
   Sliders,
   FileSpreadsheet,
-  Keyboard,
-  Coins,
-  Wallet,
-  ArrowRight,
-  Sparkles,
-  Sun,
-  Moon,
-  Database,
-  FileText,
-  X,
-  Bell,
-  CornerDownLeft,
-  Check,
-} from 'lucide-react';
+  Keyboard,  Wallet,  Database,  X,
+  Bell,} from 'lucide-react';
 import {
-  AppTableIcon,
-  AppAuthIcon,
-  AppAdvisorIcon,
-  AppSettingsIcon,
-} from '@/components/icons/AppIcons';
-import { AsopalavLogo } from '@/components/icons/AsopalavLogo';
+  AppTableIcon,} from '@/components/icons/AppIcons';
 import { Kbd } from '@/components/ui/Kbd';
 import { showToast } from '@/components/ui/ToastContainer';
-
-const CATEGORY_CHIPS: { id: SearchCategory; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'all', label: 'All', icon: Sparkles },
-  { id: 'vouchers', label: 'Expenses', icon: Receipt },
-  { id: 'advances', label: 'Advances', icon: HandCoins },
-  { id: 'staff', label: 'Staff', icon: Users },
-  { id: 'master', label: 'Settings', icon: Sliders },
-  { id: 'actions', label: 'Actions', icon: ZapIcon },
-];
-
-function ZapIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  );
-}
 
 export const GlobalSearchModal: React.FC = () => {
   const {
@@ -64,16 +27,10 @@ export const GlobalSearchModal: React.FC = () => {
     setSearchOpen,
     setActivePage,
     openDrawer,
-    setSettleTargetAdvance,
-    setBulkImportOpen,
-    setAdvanceModalOpen,
-    setShortcutsModalOpen,
-    toggleTheme,
-    setTheme,
-    isStaffAdvanceBetaEnabled,
+    setSettleTargetAdvance,    setShortcutsModalOpen,    isStaffAdvanceBetaEnabled,
   } = useUIStore();
-  const { can } = useAuthStore();
-  const { branches, setSelectedBranchId, selectedBranchId } = useBranchStore();
+  const { user, can } = useAuthStore();
+  const { setSelectedBranchId, selectedBranchId } = useBranchStore();
 
   useScrollLock(isSearchOpen);
   const [query, setQuery] = useState('');
@@ -81,7 +38,7 @@ export const GlobalSearchModal: React.FC = () => {
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
-
+  
   const inputRef = useRef<HTMLInputElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const backdropRef = useRef<HTMLDivElement | null>(null);
@@ -184,7 +141,7 @@ export const GlobalSearchModal: React.FC = () => {
       showToast({
         type: 'info',
         title: 'Opening Voucher',
-        message: `Voucher #${item.rawItem.voucher_number}`,
+        message: `Voucher #${formatVoucherNumber(item.rawItem.voucher_number)}`,
       });
     } else if (item.actionType === 'open_advance' && item.rawItem) {
       setSettleTargetAdvance(item.rawItem);
@@ -228,7 +185,7 @@ export const GlobalSearchModal: React.FC = () => {
         category: 'vouchers',
         title: 'Add New Expense',
         categoryLabel: 'SHOP WORK',
-        subtitle: 'Pay bill from cash box or shop bank UPI',
+        subtitle: 'Pay bill from cash box or shop UPI QR',
         relevanceScore: 100,
         actionType: 'navigate' as const,
         actionPayload: { page: 'new-voucher' },
@@ -237,9 +194,9 @@ export const GlobalSearchModal: React.FC = () => {
       {
         id: 'cmd-cash-drawer',
         category: 'vouchers',
-        title: 'Cash Box & Bank',
+        title: 'Cash Drawer & UPI',
         categoryLabel: 'SHOP WORK',
-        subtitle: 'Check cash in box, bank UPI balance & move cash to safe',
+        subtitle: 'Check cash in box, UPI balance & drawer passbook',
         relevanceScore: 90,
         actionType: 'navigate' as const,
         actionPayload: { page: 'treasury' },
@@ -289,33 +246,27 @@ export const GlobalSearchModal: React.FC = () => {
         actionPayload: { page: 'settings' },
         perm: 'can_manage_periods',
       },
-      {
-        id: 'cmd-audit',
-        category: 'master',
-        title: 'Activity History',
-        categoryLabel: 'SETTINGS & TEAM',
-        subtitle: 'View history of who did what and when',
-        relevanceScore: 65,
-        actionType: 'navigate' as const,
-        actionPayload: { page: 'audit' },
-        perm: 'can_view_audit_logs',
-      },
-      {
-        id: 'cmd-notifications',
-        category: 'actions',
-        title: 'Alerts & Messages',
-        categoryLabel: 'SYSTEM & TOOLS',
-        subtitle: 'Safe drop alerts, overdue advances & closing warnings',
-        relevanceScore: 60,
-        actionType: 'navigate' as const,
-        actionPayload: { page: 'notifications' },
-      },
+      ...(isPrivilegedAdminRole(user?.role_code)
+        ? [
+            {
+              id: 'cmd-audit',
+              category: 'master' as const,
+              title: 'Master Security Log Book',
+              categoryLabel: 'SECURITY & GOVERNANCE',
+              subtitle: 'Inspect real-time cryptographic audit trails and user activities',
+              relevanceScore: 68,
+              actionType: 'navigate' as const,
+              actionPayload: { page: 'audit' as PageId },
+            },
+          ]
+        : []),
+
       {
         id: 'cmd-shortcuts',
         category: 'actions',
         title: 'Keyboard Shortcuts',
         categoryLabel: 'SYSTEM & TOOLS',
-        subtitle: 'View all keyboard shortcuts and POS hotkeys',
+        subtitle: 'View all keyboard shortcuts and function hotkeys',
         relevanceScore: 55,
         actionType: 'navigate' as const,
         actionPayload: { page: 'dashboard' },
@@ -337,7 +288,7 @@ export const GlobalSearchModal: React.FC = () => {
       if (item.perm && !can(item.perm)) return false;
       return true;
     });
-  }, [can, isStaffAdvanceBetaEnabled]);
+  }, [user, can, isStaffAdvanceBetaEnabled]);
 
   // Display Items: either search results or default quick actions
   const displayItems = query.trim() ? results : defaultCommands;
@@ -417,6 +368,7 @@ export const GlobalSearchModal: React.FC = () => {
     if (item.id === 'cmd-new-expense') return Receipt;
     if (item.id === 'cmd-cash-drawer') return Wallet;
     if (item.id === 'cmd-advances') return HandCoins;
+    if (item.id === 'cmd-reports' || item.actionPayload?.page === 'reports') return FileSpreadsheet;
     if (item.id === 'cmd-ledger') return AppTableIcon;
     if (item.id === 'cmd-staff') return Users;
     if (item.id === 'cmd-settings') return Sliders;
@@ -435,7 +387,7 @@ export const GlobalSearchModal: React.FC = () => {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 select-none font-sans"
+      className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4 select-none font-sans"
       onKeyDown={handleKeyDown}
     >
       <div

@@ -3,8 +3,7 @@ import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
 import { useBranchStore } from '@/store/branchStore';
 import { erpService } from '@/lib/erpService';
-import { uploadAvatarToSupabase } from '@/lib/supabase';
-import { uploadToR2 } from '@/lib/r2';
+import { supabase, uploadAvatarToSupabase } from '@/lib/supabase';
 import bcrypt from 'bcryptjs';
 import { showToast } from '@/components/ui/ToastContainer';
 import { cn } from '@/lib/utils';
@@ -24,17 +23,12 @@ import {
   Camera,
   Upload,
   Trash2,
-  Sparkles,
-  Menu,
-  X,
-  ChevronRight,
-  ShieldAlert,
-  Save,
+  Sparkles,  X,
+  ChevronRight,  Save,
   CheckCircle2,
 } from 'lucide-react';
-import { SuperAdminOverridesCard } from '@/components/settings/SuperAdminOverridesCard';
 
-type ProfileTabId = 'account' | 'security' | 'theme' | 'overrides';
+type ProfileTabId = 'account' | 'security' | 'theme';
 
 interface ProfileTabItem {
   id: ProfileTabId;
@@ -45,7 +39,7 @@ interface ProfileTabItem {
 }
 
 export const ProfileSecurityPage: React.FC = () => {
-  const { user, login, updateUserPin } = useAuthStore();
+  const { user, updateUserPin } = useAuthStore();
   const { theme, setTheme, setActivePage } = useUIStore();
   const { getActiveBranch } = useBranchStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -69,7 +63,7 @@ export const ProfileSecurityPage: React.FC = () => {
   const [firstName, setFirstName] = useState(user?.first_name || '');
   const [lastName, setLastName] = useState(user?.last_name || '');
   const [email, setEmail] = useState(user?.email || '');
-  const [username, setUsername] = useState(user?.username || '');
+  const [username] = useState(user?.username || '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar_url || '');
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -123,17 +117,15 @@ export const ProfileSecurityPage: React.FC = () => {
     try {
       let uploadedUrl = await uploadAvatarToSupabase(file, user?.username || user?.id || 'admin');
 
-      if (!uploadedUrl) {
-        uploadedUrl = await uploadToR2(file, 'avatars', file.name);
-      }
+      // Profile photos exclusively upload to Supabase avatars bucket
 
       if (uploadedUrl) {
         setAvatarUrl(uploadedUrl);
         showToast({
           id: toastId,
           type: 'success',
-          title: 'Photo Uploaded to Cloud',
-          message: 'Saved to Supabase storage. Click "Save Profile" to apply to your account.',
+          title: 'Photo Uploaded',
+          message: 'Photo saved. Click "Save Profile" to apply changes.',
         });
       } else {
         showToast({
@@ -220,7 +212,7 @@ export const ProfileSecurityPage: React.FC = () => {
   };
 
   // Open Update Security Confirmation Modal
-  const handleOpenSecurityPreview = (e: React.FormEvent) => {
+  const handleOpenSecurityPreview = async (e: React.FormEvent) => {
     e.preventDefault();
     setSecurityError('');
 
@@ -234,7 +226,26 @@ export const ProfileSecurityPage: React.FC = () => {
         setSecurityError('Please enter your current password to change it.');
         return;
       }
-      if (!(user as any).password_hash || !bcrypt.compareSync(currentPassword, (user as any).password_hash)) {
+
+      if (!user?.id) {
+        setSecurityError('Active user session not found.');
+        return;
+      }
+
+      const { data: dbUser, error: dbErr } = await supabase
+        .from('app_users')
+        .select('password_hash')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      const storedHash = dbUser?.password_hash || (user as any).password_hash;
+      const isCurrentValid =
+        storedHash &&
+        (storedHash === currentPassword ||
+          ((storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) &&
+            bcrypt.compareSync(currentPassword, storedHash)));
+
+      if (dbErr || !isCurrentValid) {
         setSecurityError('Current password is incorrect.');
         return;
       }
@@ -276,24 +287,30 @@ export const ProfileSecurityPage: React.FC = () => {
     setIsUpdatingSecurity(true);
 
     try {
-      if (pin && user) {
-        const hashedPin = bcrypt.hashSync(pin, 10);
-        updateUserPin(user.id, pin);
-        // Also persist to database
-        await erpService.saveAppUser(
-          { id: user.id, username: user.username, role_code: user.role_code, lock_pin_hash: hashedPin },
-          true,
-          `${user.first_name} ${user.last_name}`,
-          user.role_code
-        );
-      }
+      if (user && (pin || newPassword)) {
+        const updatePayload: any = {
+          id: user.id,
+          username: user.username,
+          role_code: user.role_code,
+          first_name: user.first_name,
+          last_name: user.last_name,
+        };
 
-      if (newPassword && user) {
-        const hashedPassword = bcrypt.hashSync(newPassword, 10);
+        if (pin) {
+          const hashedPin = bcrypt.hashSync(pin, 10);
+          updateUserPin(user.id, pin);
+          updatePayload.lock_pin_hash = hashedPin;
+        }
+
+        if (newPassword) {
+          const hashedPassword = bcrypt.hashSync(newPassword, 10);
+          updatePayload.password_hash = hashedPassword;
+        }
+
         await erpService.saveAppUser(
-          { ...user, password_hash: hashedPassword },
+          updatePayload,
           true,
-          `${user.first_name} ${user.last_name}`,
+          `${user.first_name} ${user.last_name}`.trim(),
           user.role_code
         );
       }
@@ -363,7 +380,7 @@ export const ProfileSecurityPage: React.FC = () => {
       name: 'Password & PIN',
       group: 'PERSONAL SETTINGS',
       icon: KeyRound,
-      description: 'Login password and terminal quick-switch 4-digit lock PIN',
+      description: 'Login password and quick-switch 4-digit screen lock PIN',
     },
     {
       id: 'theme',
@@ -372,17 +389,6 @@ export const ProfileSecurityPage: React.FC = () => {
       icon: Sparkles,
       description: 'Showroom display mode, dark night theme, and studio canvas density',
     },
-    ...(isSuperAdminOrDev
-      ? ([
-          {
-            id: 'overrides',
-            name: 'Emergency Overrides',
-            group: 'ADMIN CONTROLS',
-            icon: ShieldAlert,
-            description: 'Master rule bypasses, Section 40A(3) override, and till overdraft switches',
-          },
-        ] as ProfileTabItem[])
-      : []),
   ];
 
   return (
@@ -672,7 +678,7 @@ export const ProfileSecurityPage: React.FC = () => {
                     <span>Login Password &amp; Lock PIN</span>
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-[#888888] font-sans mt-0.5">
-                    Update your account login password and the 4-digit numeric PIN used for quick POS lock screen unlock.
+                    Update your account login password and the 4-digit numeric PIN used for quick lock screen unlock.
                   </p>
                 </div>
 
@@ -913,12 +919,7 @@ export const ProfileSecurityPage: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 4: EMERGENCY SYSTEM OVERRIDES (Super Admin Only) */}
-          {activeTabId === 'overrides' && isSuperAdminOrDev && (
-            <div className="space-y-6 animate-in fade-in duration-150">
-              <SuperAdminOverridesCard />
-            </div>
-          )}
+
         </div>
       </main>
 

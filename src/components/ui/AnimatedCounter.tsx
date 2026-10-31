@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react';
-import gsap from 'gsap';
+import React, { useEffect, useRef, useState } from 'react';
 import { formatINR } from '@/lib/utils';
 
 interface AnimatedCounterProps {
@@ -11,6 +10,10 @@ interface AnimatedCounterProps {
   className?: string;
 }
 
+/**
+ * GPU-friendly 60/120fps requestAnimationFrame numeric counter.
+ * Zero external library dependencies (0 kB bundle size).
+ */
 export const AnimatedCounter: React.FC<AnimatedCounterProps> = ({
   value,
   prefix = '',
@@ -19,43 +22,53 @@ export const AnimatedCounter: React.FC<AnimatedCounterProps> = ({
   isCurrency = false,
   className = '',
 }) => {
-  const nodeRef = useRef<HTMLSpanElement>(null);
-  const prevValueRef = useRef<number>(0);
+  const [displayValue, setDisplayValue] = useState<number>(Number(value) || 0);
+  const prevValueRef = useRef<number>(Number(value) || 0);
+  const animFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const node = nodeRef.current;
-    if (!node) return;
-
     const startVal = prevValueRef.current;
     const endVal = Number(value) || 0;
-    const tracker = { val: startVal };
 
-    const tween = gsap.to(tracker, {
-      val: endVal,
-      duration,
-      ease: 'power2.out',
-      onUpdate: () => {
-        if (!node) return;
-        const currentRounded = Math.round(tracker.val);
-        if (isCurrency) {
-          node.textContent = formatINR(currentRounded);
-        } else {
-          node.textContent = `${prefix}${currentRounded.toLocaleString('en-IN')}${suffix}`;
-        }
-      },
-      onComplete: () => {
+    if (startVal === endVal) {
+      setDisplayValue(endVal);
+      return;
+    }
+
+    const startTime = performance.now();
+    const durationMs = duration * 1000;
+
+    const tick = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / durationMs, 1);
+      // Ease out cubic
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const current = Math.round(startVal + (endVal - startVal) * easeOut);
+
+      setDisplayValue(current);
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        setDisplayValue(endVal);
         prevValueRef.current = endVal;
-      },
-    });
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(tick);
 
     return () => {
-      tween.kill();
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
     };
-  }, [value, prefix, suffix, duration, isCurrency]);
+  }, [value, duration]);
 
   return (
-    <span ref={nodeRef} className={className}>
-      {isCurrency ? formatINR(value) : `${prefix}${value.toLocaleString('en-IN')}${suffix}`}
+    <span className={className}>
+      {isCurrency ? formatINR(displayValue) : `${prefix}${displayValue.toLocaleString('en-IN')}${suffix}`}
     </span>
   );
 };
+
+export default AnimatedCounter;

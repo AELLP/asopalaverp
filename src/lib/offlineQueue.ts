@@ -135,12 +135,10 @@ export const useOfflineQueue = create<OfflineQueueState>((set, get) => ({
     // C-2 Security: Validate session is still active before replaying mutations.
     // A mutation queued hours ago may now have an expired or revoked session.
     let currentUserId: string | null = null;
-    let currentRole: string | null = null;
-    try {
+        try {
       const authUser = useAuthStore.getState().user;
       currentUserId = authUser?.id ?? null;
-      currentRole = authUser?.role_code ?? null;
-    } catch {}
+          } catch {}
 
     // High-risk mutation types that MUST have a verified active session to replay
     const ROLE_GATED_TYPES: Set<string> = new Set([

@@ -3,22 +3,19 @@ import { useScrollLock } from '@/hooks/useScrollLock';
 import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
 import { erpService } from '@/lib/erpService';
-import { Branch, AppUser, StaffMember, ExpenseCategory, Department, CourierPartner, AppRole } from '@/types/database';
+import { StaffMember, Department, AppRole } from '@/types/database';
 import { SlideOverDrawer } from '@/components/ui/SlideOverDrawer';
 import { SupabaseFieldRow } from '@/components/ui/SupabaseFieldRow';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import {
   Trash2,
   AlertCircle,
-  Code2,
-  Check,
+  AlertTriangle,  Check,
   Save,
   CheckCircle2,
-  ShieldCheck,
-  ExternalLink,
-  X,
+  ShieldCheck,  X,
 } from 'lucide-react';
-import { cn, cleanIndianPhoneInput } from '@/lib/utils';
+import { cleanIndianPhoneInput } from '@/lib/utils';
 import { showToast } from '@/components/ui/ToastContainer';
 
 export type MasterDrawerType = 'branch' | 'category' | 'department' | 'courier' | 'user' | 'staff' | 'role';
@@ -31,16 +28,6 @@ export interface MasterDrawerProps {
   onSuccess: () => void;
 }
 
-const tableNames: Record<MasterDrawerType, string> = {
-  branch: 'master_branches',
-  category: 'expense_categories',
-  department: 'master_departments',
-  courier: 'master_couriers',
-  user: 'users',
-  staff: 'master_staff',
-  role: 'roles',
-};
-
 export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
   isOpen,
   onClose,
@@ -51,8 +38,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
   const { user } = useAuthStore();
   const { branches } = useBranchStore();
   const isPrivileged = isPrivilegedAdminRole(user?.role_code);
-  const isDeveloper = isPrivileged;
-  const isSuperAdmin = isPrivileged;
+    const isSuperAdmin = isPrivileged;
   const isEdit = Boolean(record);
 
   useScrollLock(isOpen);
@@ -60,6 +46,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
   const [formData, setFormData] = useState<any>({});
   const [availableRoles, setAvailableRoles] = useState<AppRole[]>([]);
   const [availableStaff, setAvailableStaff] = useState<StaffMember[]>([]);
+  const [availableDepartments, setAvailableDepartments] = useState<Department[]>([]);
   const [isCustomStaffCode, setIsCustomStaffCode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
@@ -67,6 +54,12 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
   const [error, setError] = useState('');
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [renameCascadeModal, setRenameCascadeModal] = useState<{
+    open: boolean;
+    oldName: string;
+    newName: string;
+    entityType: 'category' | 'department' | 'courier' | 'staff' | 'branch';
+  } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -84,6 +77,13 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
           }
         });
       }
+      if (type === 'staff') {
+        erpService.getDepartments(true).then((deptList) => {
+          if (deptList && deptList.length > 0) {
+            setAvailableDepartments(deptList);
+          }
+        });
+      }
     }
   }, [isOpen, type]);
 
@@ -96,7 +96,8 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
       setIsPreviewOpen(false);
 
       if (record) {
-        setFormData({ ...record });
+        const { password_hash: _p, lock_pin_hash: _l, studio_password: _s, ...cleanRecord } = record;
+        setFormData({ ...cleanRecord });
         if (type === 'role' && record.role_code) {
           erpService.getRolePermissions(record.role_code).then((p) => {
             if (p) {
@@ -146,7 +147,6 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
             setFormData({
               department_name: '',
               department_code: '',
-              description: '',
               is_active: true,
             });
             break;
@@ -261,6 +261,38 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
         }
       }
 
+      // Check if primary name/identifier was edited on existing record
+      if (isEdit && record) {
+        let oldName = '';
+        let newName = '';
+        if (type === 'category' && record.category_name && formData.category_name && record.category_name.trim() !== formData.category_name.trim()) {
+          oldName = record.category_name.trim();
+          newName = formData.category_name.trim();
+        } else if (type === 'department' && record.department_name && formData.department_name && record.department_name.trim() !== formData.department_name.trim()) {
+          oldName = record.department_name.trim();
+          newName = formData.department_name.trim();
+        } else if (type === 'courier' && record.partner_name && formData.partner_name && record.partner_name.trim() !== formData.partner_name.trim()) {
+          oldName = record.partner_name.trim();
+          newName = formData.partner_name.trim();
+        } else if (type === 'staff' && record.first_name && formData.first_name && `${record.first_name} ${record.last_name || ''}`.trim() !== `${formData.first_name} ${formData.last_name || ''}`.trim()) {
+          oldName = `${record.first_name} ${record.last_name || ''}`.trim();
+          newName = `${formData.first_name} ${formData.last_name || ''}`.trim();
+        } else if (type === 'branch' && record.branch_name && formData.branch_name && record.branch_name.trim() !== formData.branch_name.trim()) {
+          oldName = record.branch_name.trim();
+          newName = formData.branch_name.trim();
+        }
+
+        if (oldName && newName) {
+          setRenameCascadeModal({
+            open: true,
+            oldName,
+            newName,
+            entityType: type as any,
+          });
+          return;
+        }
+      }
+
       setIsPreviewOpen(true);
     } catch (err: any) {
       setError(err.message || 'Please check required fields.');
@@ -271,6 +303,50 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
       });
     }
   }, [formData, isEdit, type, record]);
+
+  const handleExecuteRename = async (updateHistoricalData: boolean) => {
+    if (!renameCascadeModal) return;
+    setLoading(true);
+    setError('');
+    const { oldName, newName, entityType } = renameCascadeModal;
+
+    try {
+      const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim() || 'Super Admin';
+      const userRole = user?.role_code || 'Super_Admin';
+
+      const res = await erpService.renameMasterEntity({
+        entityType,
+        oldIdOrName: oldName,
+        newIdOrName: newName,
+        updateHistoricalData,
+        additionalUpdates: formData,
+        userName,
+        userRole,
+      });
+
+      showToast({
+        type: 'success',
+        title: 'Master Record Updated',
+        message: updateHistoricalData
+          ? `Renamed "${oldName}" to "${newName}" and updated ${res.updatedRecordsCount} past records.`
+          : `Renamed "${oldName}" to "${newName}" for future records. Historical data preserved.`,
+      });
+
+      setRenameCascadeModal(null);
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      console.error('Rename cascade error:', err);
+      setError(err.message || 'Failed to rename record.');
+      showToast({
+        type: 'error',
+        title: 'Rename Failed',
+        message: err.message || 'Database error occurred.',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleFinalCommit = useCallback(async () => {
     setError('');
@@ -435,8 +511,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
     }
   };
 
-  const tableName = tableNames[type];
-
+  
   const entityLabels: Record<MasterDrawerType, string> = {
     branch: 'Shop Branch',
     category: 'Expense Category',
@@ -635,7 +710,6 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   <input
                     type="text"
                     required
-                    disabled={isEdit}
                     value={formData.category_name || ''}
                     onChange={(e) => handleChange('category_name', e.target.value)}
                     placeholder="e.g. Printing & Stationery"
@@ -716,14 +790,18 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   <p className="text-[11px] text-slate-500 dark:text-[#707070]">Additional information (optional)</p>
                 </div>
 
-                <SupabaseFieldRow columnName="description" dataType="text">
-                  <input
-                    type="text"
-                    value={formData.description || ''}
-                    onChange={(e) => handleChange('description', e.target.value)}
-                    placeholder="Showroom operational division..."
-                    className={inputStyles}
-                  />
+                <SupabaseFieldRow columnName="is_active" dataType="boolean">
+                  <label className="flex items-center gap-2 cursor-pointer select-none py-1">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_active ?? true}
+                      onChange={(e) => handleChange('is_active', e.target.checked)}
+                      className="rounded text-[#3ecf8e] focus:ring-0 w-4 h-4 bg-[#181818] border-[#2e2e2e]"
+                    />
+                    <span className="text-slate-700 dark:text-zinc-300 font-sans text-xs font-medium">
+                      {formData.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </label>
                 </SupabaseFieldRow>
               </div>
             )}
@@ -777,6 +855,20 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                     placeholder="+91 98765 43210"
                     className={inputStyles}
                   />
+                </SupabaseFieldRow>
+
+                <SupabaseFieldRow columnName="is_active" dataType="boolean">
+                  <label className="flex items-center gap-2 cursor-pointer select-none py-1">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_active ?? true}
+                      onChange={(e) => handleChange('is_active', e.target.checked)}
+                      className="rounded text-[#3ecf8e] focus:ring-0 w-4 h-4 bg-[#181818] border-[#2e2e2e]"
+                    />
+                    <span className="text-slate-700 dark:text-zinc-300 font-sans text-xs font-medium">
+                      {formData.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </label>
                 </SupabaseFieldRow>
               </div>
             )}
@@ -860,7 +952,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                             <span>Automatic Access Cutoff Policy</span>
                           </div>
                           <p className="text-[10.5px] leading-tight text-slate-600 dark:text-[#a1a1a1]">
-                            If a staff member leaves or is marked <strong>Inactive / Resigned</strong>, their system login access and POS counter PIN are instantly and automatically revoked.
+                            If a staff member leaves or is marked <strong>Inactive / Resigned</strong>, their system login access and counter lock PIN are instantly and automatically revoked.
                           </p>
                         </div>
                       )}
@@ -930,7 +1022,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   columnName="password_hash"
                   dataType="varchar"
                   required={!isEdit}
-                  description={isEdit ? 'Leave blank to keep current password' : 'Encrypted credential for terminal login'}
+                  description={isEdit ? 'Leave blank to keep current password' : 'Encrypted credential for staff login'}
                 >
                   <input
                     type="password"
@@ -968,7 +1060,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   />
                 </SupabaseFieldRow>
 
-                <SupabaseFieldRow columnName="lock_pin_hash" dataType="varchar" description="4-Digit POS Fast Terminal Lock PIN">
+                <SupabaseFieldRow columnName="lock_pin_hash" dataType="varchar" description="4-Digit Fast Screen Lock PIN">
                   <input
                     type="password"
                     maxLength={4}
@@ -977,6 +1069,20 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                     placeholder="1234"
                     className={inputStyles}
                   />
+                </SupabaseFieldRow>
+
+                <SupabaseFieldRow columnName="is_active" dataType="boolean">
+                  <label className="flex items-center gap-2 cursor-pointer select-none py-1">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_active ?? true}
+                      onChange={(e) => handleChange('is_active', e.target.checked)}
+                      className="rounded text-[#3ecf8e] focus:ring-0 w-4 h-4 bg-[#181818] border-[#2e2e2e]"
+                    />
+                    <span className="text-slate-700 dark:text-zinc-300 font-sans text-xs font-medium">
+                      {formData.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </label>
                 </SupabaseFieldRow>
               </div>
             )}
@@ -1078,12 +1184,27 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                 </SupabaseFieldRow>
 
                 <SupabaseFieldRow columnName="department_name" dataType="varchar">
-                  <input
-                    type="text"
+                  <SearchableSelect
+                    options={[
+                      { value: '', label: '-- No Department Selected --' },
+                      ...availableDepartments.map((d) => ({
+                        value: d.department_name,
+                        label: d.department_name,
+                        badge: d.department_code,
+                      })),
+                    ]}
                     value={formData.department_name || ''}
-                    onChange={(e) => handleChange('department_name', e.target.value)}
-                    placeholder="Showroom Sales"
-                    className={inputStyles}
+                    onChange={(deptName) => {
+                      const matchedDept = availableDepartments.find((d) => d.department_name === deptName);
+                      setFormData((prev: any) => ({
+                        ...prev,
+                        department_name: deptName,
+                        department_code: matchedDept?.department_code || prev.department_code || null,
+                      }));
+                    }}
+                    placeholder="Select department..."
+                    searchPlaceholder="Search department..."
+                    allowCustom={false}
                   />
                 </SupabaseFieldRow>
 
@@ -1105,6 +1226,20 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                     placeholder="+91 98765 43210"
                     className={inputStyles}
                   />
+                </SupabaseFieldRow>
+
+                <SupabaseFieldRow columnName="is_active" dataType="boolean">
+                  <label className="flex items-center gap-2 cursor-pointer select-none py-1">
+                    <input
+                      type="checkbox"
+                      checked={formData.is_active ?? true}
+                      onChange={(e) => handleChange('is_active', e.target.checked)}
+                      className="rounded text-[#3ecf8e] focus:ring-0 w-4 h-4 bg-[#181818] border-[#2e2e2e]"
+                    />
+                    <span className="text-slate-700 dark:text-zinc-300 font-sans text-xs font-medium">
+                      {formData.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </label>
                 </SupabaseFieldRow>
               </div>
             )}
@@ -1146,7 +1281,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                     type="text"
                     value={formData.description || ''}
                     onChange={(e) => handleChange('description', e.target.value)}
-                    placeholder="Terminal rights and operational authorization..."
+                    placeholder="Role permissions and operational authorization..."
                     className={inputStyles}
                   />
                 </SupabaseFieldRow>
@@ -1184,8 +1319,8 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                             className="mt-0.5 rounded text-[#3ecf8e] focus:ring-0 cursor-pointer"
                           />
                           <div>
-                            <span className="font-medium text-slate-900 dark:text-zinc-100 block">Cash Box & Bank (F4)</span>
-                            <span className="text-[11px] text-slate-500 dark:text-[#888]">Treasury drawer, safe drop & float</span>
+                            <span className="font-medium text-slate-900 dark:text-zinc-100 block">Cash Drawer & UPI (F4)</span>
+                            <span className="text-[11px] text-slate-500 dark:text-[#888]">Treasury drawer till & float entry</span>
                           </div>
                         </label>
 
@@ -1563,6 +1698,79 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   <Check className="w-3.5 h-3.5 stroke-[2.5]" />
                 )}
                 <span>Confirm & Save</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Name Change & Historical Cascade Confirmation Modal */}
+      {renameCascadeModal && renameCascadeModal.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[12px] p-6 max-w-lg w-full shadow-2xl space-y-5">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                  Rename Master Record
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-[#a1a1a1]">
+                  You are changing the name of this master entity from <span className="font-mono font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-[4px]">{renameCascadeModal.oldName}</span> to <span className="font-mono font-semibold text-emerald-600 dark:text-[#3ecf8e] bg-emerald-500/10 px-1.5 py-0.5 rounded-[4px]">{renameCascadeModal.newName}</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-[8px] bg-slate-50 dark:bg-[#1c1c1c] border border-slate-200 dark:border-[#2e2e2e] space-y-2 text-xs">
+              <div className="font-medium text-slate-700 dark:text-zinc-200">
+                How should existing vouchers, splits, and historical ledgers be handled?
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-[#888888] leading-relaxed">
+                Choose whether you want to update all existing historical vouchers and reports to use the new name, or only use the new name for future vouchers while keeping old records unchanged.
+              </p>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={() => handleExecuteRename(true)}
+                disabled={loading}
+                className="w-full text-left p-3.5 rounded-[8px] bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 transition-colors cursor-pointer group"
+              >
+                <div className="flex items-center justify-between font-semibold text-xs text-emerald-950 dark:text-[#3ecf8e]">
+                  <span>Update ALL Past &amp; Future Records (Recommended)</span>
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/20">Full Cascade</span>
+                </div>
+                <p className="text-[11px] text-emerald-900/70 dark:text-emerald-300/70 mt-1 leading-tight">
+                  Renames all historical expense vouchers, split lines, advances, and registers. Logs a full audit trail of the rename.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExecuteRename(false)}
+                disabled={loading}
+                className="w-full text-left p-3.5 rounded-[8px] bg-slate-100 hover:bg-slate-200/80 dark:bg-[#202020] dark:hover:bg-[#262626] border border-slate-200 dark:border-[#333333] text-slate-800 dark:text-zinc-200 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center justify-between font-semibold text-xs">
+                  <span>Only Apply to NEW Records</span>
+                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-[#333333]">Master Only</span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-[#888888] mt-1 leading-tight">
+                  Past vouchers keep the old name &quot;{renameCascadeModal.oldName}&quot;. Only vouchers created after this point will use the new name.
+                </p>
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-[#262626]">
+              <button
+                type="button"
+                onClick={() => setRenameCascadeModal(null)}
+                disabled={loading}
+                className="py-2 px-4 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#222222] text-xs font-medium transition-colors cursor-pointer"
+              >
+                Cancel
               </button>
             </div>
           </div>

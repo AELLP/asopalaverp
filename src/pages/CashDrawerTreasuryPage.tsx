@@ -1,71 +1,25 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { format as formatDateFns } from 'date-fns';
-import { useAuthStore } from '@/store/authStore';
+import { format as formatDateFns, startOfWeek, startOfMonth, startOfQuarter, subDays, subMonths } from 'date-fns';
+import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
 import { useUIStore } from '@/store/uiStore';
 import { useVoucherStore } from '@/store/voucherStore';
-import { supabase } from '@/lib/supabase';
 import { erpService } from '@/lib/erpService';
+import { calculateDailyCashBalances } from '@/lib/dailyCashBalance';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
-import { formatINR, numberToWordsINR, formatDate, cn, triggerHaptic } from '@/lib/utils';
-import { useOverrideStore } from '@/store/overrideStore';
-import { SafeDropDrawer } from '@/components/treasury/SafeDropDrawer';
+import { formatINR, formatCompactINR, numberToWordsINR, formatDate, formatVoucherNumber, cn, triggerHaptic } from '@/lib/utils';
+import { DailyEodTillModal } from '@/components/treasury/DailyEodTillModal';
+import { DailyCashDrawerStatement } from '@/components/treasury/DailyCashDrawerStatement';
+import { TreasuryPassbookTable } from '@/components/treasury/TreasuryPassbookTable';
 import { DatePicker } from '@/components/ui/DatePicker';
+import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { AccessDeniedView } from '@/components/common/AccessDeniedView';
 import {
   Wallet,
   Coins,
-  CheckCircle2,
-  AlertCircle,
-  Building2,
-  Lock,
-  History,
-  Check,
-  Plus,
-  Minus,
-  RotateCcw,
-  ShieldCheck,
-  AlertTriangle,
-  Search,
-  Download,
-  FileSpreadsheet,
-  Code,
-  Terminal,
-  MoreVertical,
-  ChevronDown,
-  X,
-  SlidersHorizontal,
-  Calendar,
-  Clock,
-  Activity,
-  ArrowDownLeft,
-  ArrowUpRight,
-  Layers,
-  LayoutList,
-  Banknote,
-  QrCode,
-  User,
-  Sparkles,
-  FileText,
-  Tag,
-  Shield,
-  RefreshCw,
-  Eye,
-  CheckCheck,
-  CheckSquare,
-  ExternalLink,
-  ChevronRight,
-  Filter,
-  Copy,
-  Printer,
-  Trash2,
-  ArrowDown,
-  ArrowUp,
-  Sliders,
-} from 'lucide-react';
-import { showToast } from '@/components/ui/ToastContainer';
+  Calculator,  Building2,
+  TrendingUp,  Receipt,  Check,  RotateCcw,  Search,  FileSpreadsheet,  X,  FileText,  RefreshCw,  Copy,} from 'lucide-react';
 import { useGsapContext } from '@/hooks/useGsap';
 import { animateStaggerCards } from '@/lib/animations';
 
@@ -73,71 +27,14 @@ type DateFilter = 'this_month' | 'today' | 'yesterday' | 'week' | 'all' | 'custo
 type ScopeFilter = 'ALL' | 'INFLOW' | 'OUTFLOW' | 'Float_Topup' | 'Expense_Voucher' | 'Safe_Drop' | 'Adjustment';
 type SortOption = 'newest' | 'oldest' | 'highest_amount' | 'lowest_amount';
 
-interface DenomCount {
-  [key: number]: number;
-}
-
-const ALL_DENOMS = [500, 200, 100, 50, 20, 10, 5, 2, 1];
-
-function parseLedgerNotes(remarks?: string) {
-  if (!remarks) return { title: 'Cash Added to Drawer', chips: [], modeDetails: null };
-
-  let title = remarks;
-  const chips: string[] = [];
-  let modeDetails: string | null = null;
-
-  // Extract [Transfer Mode: ...]
-  const modeMatch = title.match(/\[Transfer Mode:\s*([^\]]+)\]/i);
-  if (modeMatch) {
-    modeDetails = modeMatch[1].trim();
-    title = title.replace(modeMatch[0], '').trim();
-  }
-
-  // Extract and remove [Date: ...]
-  const dateMatch = title.match(/\[Date:\s*([^\]]+)\]/i);
-  if (dateMatch) {
-    title = title.replace(dateMatch[0], '').trim();
-  }
-
-  // Extract [Notes: ₹500×3, ...] or [₹100 x 15 = ₹1500 | ...]
-  const notesMatch = title.match(/\[(?:Notes:\s*)?([^\]]+)\]/i);
-  if (notesMatch) {
-    const rawBreakdown = notesMatch[1];
-    if (rawBreakdown.includes('₹') || rawBreakdown.includes('x') || rawBreakdown.includes('×') || rawBreakdown.includes('=')) {
-      const parts = rawBreakdown.split(/[|,]/).map((p) => p.trim()).filter(Boolean);
-      parts.forEach((p) => {
-        chips.push(p);
-      });
-      title = title.replace(notesMatch[0], '').trim();
-    }
-  }
-
-  if (!title) {
-    title = 'Morning Opening Till Float';
-  }
-
-  return { title, chips, modeDetails };
-}
-
-function downloadBlob(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
 export const CashDrawerTreasuryPage: React.FC = () => {
   const { user, getAllowedBranches, isBranchAllowed } = useAuthStore();
   const { branches, selectedBranchId, getActiveBranch } = useBranchStore();
   const { setActivePage } = useUIStore();
 
-  const isCashier = user?.role_code === 'Cashier';
-  const isDeveloper = user?.role_code === 'Developer' || user?.role_code === 'Super_Admin';
+  const isPrivileged = isPrivilegedAdminRole(user?.role_code);
+  const isCashier = user?.role_code === 'Cashier' && !isPrivileged;
+  const isDeveloper = isPrivileged || user?.role_code === 'Developer';
 
   const allowedBranches = getAllowedBranches(branches);
   const activeBranch = getActiveBranch();
@@ -161,24 +58,20 @@ export const CashDrawerTreasuryPage: React.FC = () => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Pro Enterprise Ledger View & Filter State
-  const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('ALL');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('this_month');
+  const [scopeFilter] = useState<ScopeFilter>('ALL');  const [dateFilter, setDateFilter] = useState<DateFilter>('this_month');
   const [customDate, setCustomDate] = useState<string>(formatDateFns(new Date(), 'yyyy-MM-dd'));
-  const [ledgerSearch, setLedgerSearch] = useState('');
-  const [ledgerWalletFilter, setLedgerWalletFilter] = useState<'ALL' | 'Cash' | 'UPI'>('ALL');
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
-  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
-  const [activeRowDropdownId, setActiveRowDropdownId] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
-  const [viewLedgerEntry, setViewLedgerEntry] = useState<any | null>(null);
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [selectedDayFilter, setSelectedDayFilter] = useState<string | null>(null);
+    const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerWalletFilter, setLedgerWalletFilter] = useState<'ALL' | 'Cash' | 'UPI' | 'Float_Topup'>('ALL');
+  const [sortBy] = useState<SortOption>('newest');  const [activeRowDropdownId, setActiveRowDropdownId] = useState<string | null>(null);
+      const [viewLedgerEntry, setViewLedgerEntry] = useState<any | null>(null);
   const [copiedRef, setCopiedRef] = useState<string | null>(null);
-
-  // Safe Drop Drawer State
-  const [isSafeDropOpen, setIsSafeDropOpen] = useState(false);
+  
+  const [isEodModalOpen, setIsEodModalOpen] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const exportRef = useRef<HTMLDivElement | null>(null);
 
   const containerRef = useGsapContext(() => {
     animateStaggerCards(containerRef.current, '.stagger-card', 0.03);
@@ -201,7 +94,6 @@ export const CashDrawerTreasuryPage: React.FC = () => {
       }
       if (e.key === 'Escape') {
         setActiveRowDropdownId(null);
-        setIsExportMenuOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -211,9 +103,6 @@ export const CashDrawerTreasuryPage: React.FC = () => {
   // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent | TouchEvent) {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setIsExportMenuOpen(false);
-      }
       if (
         activeRowDropdownId &&
         !(e.target as HTMLElement).closest(`[data-dropdown-id="${activeRowDropdownId}"]`)
@@ -232,6 +121,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
       const [wallet, ledger] = await Promise.all([
         erpService.getBranchWallet(selectedBranch),
         erpService.getWalletLedger(selectedBranch),
+        useVoucherStore.getState().fetchVouchers(selectedBranch),
       ]);
       setCurrentCashBalance(wallet?.cash_balance ?? 0);
       setCurrentUpiBalance(wallet?.upi_balance ?? 0);
@@ -245,51 +135,105 @@ export const CashDrawerTreasuryPage: React.FC = () => {
 
   useEffect(() => {
     loadTreasuryData();
+    let timeoutId: any = null;
     const handleUpdates = () => {
-      loadTreasuryData();
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        loadTreasuryData();
+      }, 300);
     };
     window.addEventListener('asopalav:wallet-updated', handleUpdates);
     window.addEventListener('asopalav:ledger-updated', handleUpdates);
+
     return () => {
+      if (timeoutId) clearTimeout(timeoutId);
       window.removeEventListener('asopalav:wallet-updated', handleUpdates);
       window.removeEventListener('asopalav:ledger-updated', handleUpdates);
     };
-  }, [loadTreasuryData]);
+  }, [loadTreasuryData, selectedBranch]);
 
-  // Dynamically compute running balance for each transaction chronologically
-  const entriesWithRunningBalance = useMemo(() => {
-    const chronological = [...allLedgerEntries].sort(
-      (a, b) => new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime()
-    );
-
-    let runningCash = 0;
-    let runningUpi = 0;
-    const balanceMap = new Map<string, { runningCash: number; runningUpi: number; runningCombined: number }>();
-
-    chronological.forEach((entry) => {
-      if (!entry) return;
-      const credit = Number(entry.credit_amount) || 0;
-      const debit = Number(entry.debit_amount) || 0;
-      const isUpi = entry.wallet_type === 'UPI';
-
-      if (isUpi) {
-        runningUpi += credit - debit;
-      } else {
-        runningCash += credit - debit;
+  // Fast map of voucher details for ledger narration & category breakdown
+  const voucherMap = useMemo(() => {
+    const vStore = useVoucherStore.getState();
+    const allCached = Object.values(vStore.vouchers).flat();
+    const map = new Map<string, { category_name: string; recipient_name: string; total_amount: number; payment_method: string }>();
+    allCached.forEach((v) => {
+      if (v?.voucher_number) {
+        map.set(v.voucher_number, {
+          category_name: v.category_name,
+          recipient_name: v.recipient_name,
+          total_amount: Number(v.total_amount) || 0,
+          payment_method: v.payment_method,
+        });
       }
-
-      const key = entry.id || `${entry.created_at}-${entry.credit_amount}-${entry.debit_amount}`;
-      balanceMap.set(key, {
-        runningCash,
-        runningUpi,
-        runningCombined: runningCash + runningUpi,
-      });
     });
-
-    return balanceMap;
+    return map;
   }, [allLedgerEntries]);
 
-  // Filtered allocations for Pro Enterprise Timeline / Feed & Full Table
+  // Active statement date range bounds & label
+  const dateBounds = useMemo(() => {
+    const now = new Date();
+    const todayStr = formatDateFns(now, 'yyyy-MM-dd');
+
+    if (selectedDayFilter) {
+      let label = selectedDayFilter;
+      try {
+        label = formatDateFns(new Date(`${selectedDayFilter}T12:00:00`), 'dd MMM yyyy, EEE');
+      } catch {}
+      return { start: selectedDayFilter, end: selectedDayFilter, label };
+    }
+
+    switch (dateFilter) {
+      case 'today':
+        return { start: todayStr, end: todayStr, label: 'Today' };
+      case 'yesterday': {
+        const yest = formatDateFns(subDays(now, 1), 'yyyy-MM-dd');
+        return { start: yest, end: yest, label: 'Yesterday' };
+      }
+      case 'week': {
+        const startOfWeekStr = formatDateFns(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd');
+        return { start: startOfWeekStr, end: todayStr, label: 'Last 7 Days' };
+      }
+      case 'this_month': {
+        const startOfMonthStr = formatDateFns(startOfMonth(now), 'yyyy-MM-dd');
+        return { start: startOfMonthStr, end: todayStr, label: 'This Month' };
+      }
+      case 'custom': {
+        const s = customStartDate || customDate || undefined;
+        const e = customEndDate || customDate || undefined;
+        let label = 'Custom Range';
+        if (s && e) {
+          if (s === e) {
+            try {
+              label = formatDateFns(new Date(`${s}T12:00:00`), 'dd MMM yyyy');
+            } catch {}
+          } else {
+            try {
+              label = `${formatDateFns(new Date(`${s}T12:00:00`), 'dd MMM')} – ${formatDateFns(new Date(`${e}T12:00:00`), 'dd MMM yyyy')}`;
+            } catch {}
+          }
+        }
+        return { start: s, end: e, label };
+      }
+      case 'all':
+      default:
+        return { start: undefined, end: undefined, label: 'All Time' };
+    }
+  }, [dateFilter, customDate, customStartDate, customEndDate, selectedDayFilter]);
+
+  // Mathematical Day-by-Day Cash Balance Engine
+  const dailyCashSummary = useMemo(() => {
+    return calculateDailyCashBalances(
+      allLedgerEntries,
+      currentCashBalance,
+      dateBounds.start,
+      dateBounds.end
+    );
+  }, [allLedgerEntries, currentCashBalance, dateBounds.start, dateBounds.end]);
+
+  // Dynamically compute running balance anchored backwards from the verified drawer balance
+    // Cross-reference vouchers against ledger to detect any cash check discrepancies
+    // Filtered allocations for Pro Enterprise Timeline / Feed & Full Table
   const filteredAllocations = useMemo(() => {
     let list = allLedgerEntries;
 
@@ -302,31 +246,22 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     }
 
     if (ledgerWalletFilter !== 'ALL') {
-      list = list.filter((l) => l.wallet_type === ledgerWalletFilter);
+      list = list.filter((l) =>
+        ledgerWalletFilter === 'Float_Topup'
+          ? l.transaction_type === 'Float_Topup' || (Number(l.credit_amount) > 0 && !l.transaction_type)
+          : l.wallet_type === ledgerWalletFilter
+      );
     }
 
-    const now = new Date();
-    if (dateFilter === 'this_month') {
-      const monthStr = formatDateFns(now, 'yyyy-MM');
-      list = list.filter((l) => (l.created_at || '').slice(0, 7) === monthStr);
-    } else if (dateFilter === 'today') {
-      const todayStr = formatDateFns(now, 'yyyy-MM-dd');
-      list = list.filter((l) => (l.created_at || '').slice(0, 10) === todayStr);
-    } else if (dateFilter === 'yesterday') {
-      const y = new Date();
-      y.setDate(y.getDate() - 1);
-      const yesterdayStr = formatDateFns(y, 'yyyy-MM-dd');
-      list = list.filter((l) => (l.created_at || '').slice(0, 10) === yesterdayStr);
-    } else if (dateFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      list = list.filter((l) => {
-        if (!l.created_at) return false;
-        const entryDate = new Date(l.created_at);
-        return entryDate >= sevenDaysAgo && entryDate <= now;
-      });
-    } else if (dateFilter === 'custom' && customDate) {
-      list = list.filter((l) => (l.created_at || '').slice(0, 10) === customDate);
+    if (selectedDayFilter) {
+      list = list.filter((l) => (l.created_at || '').trim().slice(0, 10) === selectedDayFilter.trim());
+    } else {
+      if (dateBounds.start) {
+        list = list.filter((l) => (l.created_at || '').trim().slice(0, 10) >= dateBounds.start!);
+      }
+      if (dateBounds.end) {
+        list = list.filter((l) => (l.created_at || '').trim().slice(0, 10) <= dateBounds.end!);
+      }
     }
 
     if (ledgerSearch.trim()) {
@@ -363,7 +298,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     });
 
     return sorted;
-  }, [allLedgerEntries, scopeFilter, ledgerWalletFilter, dateFilter, customDate, ledgerSearch, sortBy]);
+  }, [allLedgerEntries, scopeFilter, ledgerWalletFilter, dateBounds, selectedDayFilter, ledgerSearch, sortBy]);
 
   // Comprehensive Treasury Flow Summary (Top-ups, Inflow, Outflow, Net Position)
   const treasurySummary = useMemo(() => {
@@ -464,160 +399,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     setTimeout(() => setCopiedRef(null), 2000);
   };
 
-  const handleViewSlip = async (entry: any) => {
-    triggerHaptic('selection');
-    if (entry.transaction_type === 'Expense_Voucher' && entry.reference_number) {
-      const vStore = useVoucherStore.getState();
-      const allCached = Object.values(vStore.vouchers).flat();
-      const match = allCached.find((v) => v.voucher_number === entry.reference_number);
-      if (match) {
-        useUIStore.getState().setActiveDrawerVoucher(match);
-        return;
-      }
-      try {
-        const { data } = await supabase
-          .from('expense_vouchers')
-          .select('*')
-          .eq('voucher_number', entry.reference_number)
-          .maybeSingle();
-        if (data) {
-          useUIStore.getState().setActiveDrawerVoucher(data);
-          return;
-        }
-      } catch {
-        // Fallback to entry slip
-      }
-    }
-    setViewLedgerEntry(entry);
-  };
-
-  const [purgingId, setPurgingId] = useState<string | null>(null);
-
-  const handlePurgeEntry = async (entry: any) => {
-    if (!window.confirm(`Are you sure you want to delete this ledger record (${entry.reference_number || 'TRZ'})? This will permanently remove it from the audit ledger.`)) {
-      return;
-    }
-    try {
-      const entryKey = entry.id || entry.reference_number;
-      setPurgingId(entryKey);
-      const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
-      const userRole = user?.role_code || 'Super_Admin';
-      await erpService.deleteLedgerEntry({
-        entryId: entryKey,
-        branchId: selectedBranch,
-        userName,
-        userRole,
-        reason: 'Super Admin duplicate / error purge',
-        adjustWalletBalance: true,
-      });
-      showToast({
-        type: 'success',
-        title: 'Entry Purged',
-        message: `Ledger entry ${entry.reference_number || ''} was removed and wallet balance recalculated.`,
-      });
-      loadTreasuryData();
-    } catch (e: any) {
-      showToast({
-        type: 'error',
-        title: 'Purge Failed',
-        message: e?.message || 'Could not delete ledger entry.',
-      });
-    } finally {
-      setPurgingId(null);
-    }
-  };
-
-  const handleCleanDuplicates = async () => {
-    try {
-      const userName = `${user?.first_name || 'Admin'} ${user?.last_name || ''}`.trim();
-      const userRole = user?.role_code || 'Super_Admin';
-      const res = await erpService.cleanDuplicateLedgerEntries(selectedBranch, userName, userRole);
-      if (res.removedCount > 0) {
-        showToast({
-          type: 'success',
-          title: 'Duplicate Audit Complete',
-          message: `Purged ${res.removedCount} duplicate record(s). Ledger is now 100% clean.`,
-        });
-        loadTreasuryData();
-      } else {
-        showToast({
-          type: 'info',
-          title: 'Ledger Clean',
-          message: 'Zero duplicate records found. Your ledger is 100% balanced.',
-        });
-      }
-    } catch (e: any) {
-      showToast({
-        type: 'error',
-        title: 'Duplicate Cleanup Error',
-        message: e?.message || 'Failed to scan and clean duplicates.',
-      });
-    }
-  };
-
-  const handlePurgeHistoricalRecords = async () => {
-    if (
-      !window.confirm(
-        'This will purge any leftover September test top-ups (FLT-856048 & FLT-984105) across database tables, local caches, and reconcile till wallet balance to exact October 1st ledger truth. Proceed?'
-      )
-    ) {
-      return;
-    }
-    try {
-      const res = await erpService.purgeErroneousHistoricalRecords(selectedBranch);
-      showToast({
-        type: 'success',
-        title: 'Historical Records Purged',
-        message: res.message,
-      });
-      loadTreasuryData();
-    } catch (e: any) {
-      showToast({
-        type: 'error',
-        title: 'Purge Failed',
-        message: e?.message || 'Failed to purge historical test records.',
-      });
-    }
-  };
-
-  const totalPages = Math.max(1, Math.ceil(filteredAllocations.length / pageSize));
-  const paginatedAllocations = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredAllocations.slice(start, start + pageSize);
-  }, [filteredAllocations, currentPage, pageSize]);
-
-  const handleExportLedger = (format: 'csv' | 'json' | 'sql') => {
-    setIsExportMenuOpen(false);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const esc = (val?: string | null) => (val ? `'${val.replace(/'/g, "''")}'` : 'NULL');
-
-    if (format === 'json') {
-      downloadBlob(`asopalav_treasury_ledger_${dateStr}.json`, JSON.stringify(filteredAllocations, null, 2), 'application/json');
-    } else if (format === 'csv') {
-      const headers = ['Record ID', 'Date & Time', 'Credit Amount', 'Wallet Type', 'Remarks', 'Cashier', 'Authorized By'];
-      const rows = filteredAllocations.map((l) => [
-        l.id,
-        l.created_at,
-        l.credit_amount,
-        l.wallet_type,
-        `"${(l.remarks || '').replace(/"/g, '""')}"`,
-        l.cashier_name || '',
-        l.authorized_by_name || '',
-      ]);
-      const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-      downloadBlob(`asopalav_treasury_ledger_${dateStr}.csv`, csv, 'text/csv');
-    } else if (format === 'sql') {
-      const sql = filteredAllocations
-        .map(
-          (l) =>
-            `INSERT INTO wallet_ledgers (id, branch_id, transaction_type, wallet_type, credit_amount, remarks, cashier_name, authorized_by_name, created_at) VALUES (${esc(l.id)}, ${esc(l.branch_id)}, '${l.transaction_type || 'Float_Topup'}', ${esc(l.wallet_type)}, ${Number(l.credit_amount) || 0}, ${esc(l.remarks)}, ${esc(l.cashier_name)}, ${esc(l.authorized_by_name)}, ${esc(l.created_at)});`
-        )
-        .join('\n');
-      downloadBlob(`asopalav_treasury_ledger_${dateStr}.sql`, sql, 'text/plain');
-    }
-  };
-
-  const handleResetForm = () => {
+                const handleResetForm = () => {
     triggerHaptic('light');
     setAmount('');
     setReferenceNotes('');
@@ -649,29 +431,30 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     try {
       const isHistorical = entryDate !== formatDateFns(new Date(), 'yyyy-MM-dd');
       const dateTag = isHistorical ? ` [Date: ${entryDate}]` : '';
-      const defaultNote = walletType === 'Cash' ? 'Cash Box Inflow' : 'Bank UPI Inflow';
+      const defaultNote = walletType === 'Cash' ? 'Cash Box Inflow' : 'UPI Float Inflow';
       const noteContent = referenceNotes.trim() || defaultNote;
       const modeTag = transferMode ? ` [Transfer Mode: ${transferMode}]` : '';
       const fullRemarks = `${noteContent}${modeTag}${dateTag}`.trim();
 
-      const userName = `${user?.first_name || 'Store'} ${user?.last_name || 'Manager'}`.trim();
-      const authName = `${user?.first_name || 'Store'} ${user?.last_name || 'Manager'}`.trim();
+      const staffName = `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || user?.email?.split('@')[0] || 'Store Manager';
+      const matchedBranch = branches.find((b) => b.branch_id === selectedBranch);
+      const branchCode = matchedBranch?.branch_code || selectedBranch.replace(/^Aellp-/, '') || activeBranch.branch_code;
 
       await erpService.createFloatTopup({
         branchId: selectedBranch,
-        branchCode: activeBranch.branch_code,
+        branchCode,
         walletType,
         amount: amountToAdd,
         referenceNotes: fullRemarks,
-        receivedByName: userName,
-        authorizedByName: authName,
+        receivedByName: staffName,
+        authorizedByName: staffName,
         createdAt: isHistorical ? new Date(`${entryDate}T12:00:00`).toISOString() : undefined,
       });
 
       triggerHaptic('heavy');
       setFeedback({
         type: 'success',
-        message: `Successfully added ${formatINR(amountToAdd)} ${walletType === 'Cash' ? 'Cash' : 'Bank UPI'}!`,
+        message: `Successfully added ${formatINR(amountToAdd)} ${walletType === 'Cash' ? 'Cash' : 'UPI'}!`,
       });
 
       setAmount('');
@@ -687,15 +470,12 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     }
   };
 
-  const { isCeilingExceededAllowed } = useOverrideStore();
-  const safeDropExceeded = currentCashBalance > 50000 && !isCeilingExceededAllowed();
-
   if (isCashier) {
     return (
       <AccessDeniedView
         title="Access Restricted"
         message="Cash Drawer & Treasury management is restricted to Store Managers and Super Admins."
-        pageName="Cash & Bank"
+        pageName="Cash Drawer & UPI"
         onGoBack={() => setActivePage('dashboard')}
       />
     );
@@ -703,7 +483,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
 
   return (
     <div ref={containerRef} className="min-h-full flex-1 flex flex-col bg-white dark:bg-[#141414] text-slate-900 dark:text-[#EDEDED] font-sans antialiased selection:bg-[#3ecf8e]/20 selection:text-[#3ecf8e] select-none">
-      {/* 1. Cash & Bank Header */}
+      {/* 1. Cash Drawer & UPI Header */}
       <div className="relative z-30 px-4 lg:px-6 py-3.5 border-b border-slate-200 dark:border-[#242424] bg-white dark:bg-[#141414]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
           {/* Left Layer: Title, Status Badges & Subtitle */}
@@ -711,7 +491,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
             <div className="flex items-center gap-2.5">
               <h1 className="text-xl sm:text-2xl font-medium tracking-tight text-slate-900 dark:text-[#EDEDED] font-sans flex items-center gap-2">
                 <Wallet className="w-5 h-5 text-[#3ecf8e]" />
-                <span>Cash & Bank</span>
+                <span>Cash Drawer & UPI</span>
               </h1>
               <span className="px-2 py-0.5 rounded-[4px] text-[10px] tabular-nums font-mono bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-500/20 font-medium">
                 {filteredAllocations.length} records
@@ -724,20 +504,32 @@ export const CashDrawerTreasuryPage: React.FC = () => {
 
           {/* Right Layer: Action Buttons */}
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Daily EOD Till Count & Lock (Beta) */}
             <button
               type="button"
               onClick={() => {
                 triggerHaptic('selection');
-                setIsSafeDropOpen(true);
+                setIsEodModalOpen(true);
               }}
-              className="h-8 px-3 py-1.5 rounded-[6px] border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-              title="Move excess cash from box to showroom safe"
+              className="h-8 px-3 py-1.5 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-[#3ecf8e] text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+              title="Daily EOD physical notes count and reconciliation lock"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-              <span>Move to Safe</span>
+              <Calculator className="w-3.5 h-3.5 text-[#3ecf8e]" />
+              <span>Till Count Lock (Beta)</span>
             </button>
 
-
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('selection');
+                setActivePage('reports');
+              }}
+              className="h-8 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1c1c1f] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#242428] text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+              title="All Official Financial, Tally & CA Reports Hub (F5)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-[#3ecf8e]" />
+              <span>Reports Hub (F5)</span>
+            </button>
 
             <button
               type="button"
@@ -748,42 +540,6 @@ export const CashDrawerTreasuryPage: React.FC = () => {
             >
               <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin text-[#3ecf8e]")} />
             </button>
-
-            {/* Export Menu */}
-            <div className="relative" ref={exportRef}>
-              <button
-                type="button"
-                onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
-                className="h-8 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1c1c1f] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#242428] text-xs font-medium font-sans flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export</span>
-                <ChevronDown className="w-3 h-3 text-slate-400 dark:text-[#707070]" />
-              </button>
-
-              {isExportMenuOpen && (
-                <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1.5 w-44 bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] rounded-[6px] shadow-2xl p-1 z-50 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-                  <button
-                    type="button"
-                    onClick={() => handleExportLedger('csv')}
-                    className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] rounded-[4px] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e]" />
-                    <span>CSV format</span>
-                  </button>
-                  {isDeveloper && (
-                    <button
-                      type="button"
-                      onClick={() => handleExportLedger('json')}
-                      className="w-full text-left px-2.5 py-1.5 text-xs text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] hover:bg-slate-100 dark:hover:bg-[#222222] rounded-[4px] flex items-center gap-2 cursor-pointer font-mono transition-colors"
-                    >
-                      <Code className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                      <span>JSON format</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </div>
       </div>
@@ -833,38 +589,49 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               />
             </div>
 
-            {/* Date Range Selector */}
-            <div className="w-36">
-              <SearchableSelect
-                size="sm"
-                options={[
-                  { value: 'this_month', label: 'This Month' },
-                  { value: 'today', label: 'Today' },
-                  { value: 'yesterday', label: 'Yesterday' },
-                  { value: 'week', label: 'Last 7 Days' },
-                  { value: 'all', label: 'All Time' },
-                  { value: 'custom', label: 'Specific Date...' },
-                ]}
-                value={dateFilter}
-                onChange={(val) => {
-                  setDateFilter(val as DateFilter);
-                }}
-                placeholder="Date range"
-                searchPlaceholder="Search date..."
-                allowCustom={false}
-              />
-            </div>
+            {/* Unified Airline-Style DateRangePicker for Date Range selection */}
+            <DateRangePicker
+              startDate={dateBounds.start || ''}
+              endDate={dateBounds.end || ''}
+              onChange={(range) => {
+                setSelectedDayFilter(null);
+                setCustomStartDate(range.startDate);
+                setCustomEndDate(range.endDate);
+                setDateFilter('custom');
+              }}
+              size="sm"
+            />
 
-            {/* Direct DatePicker for Specific Date selection */}
-            {dateFilter === 'custom' && (
-              <div className="w-40 animate-in fade-in">
-                <DatePicker
-                  value={customDate}
-                  onChange={(val) => setCustomDate(val)}
-                  allowPastDatesOverride={true}
-                  placeholder="Pick date..."
-                  size="sm"
-                />
+            {(dateFilter !== 'all' || customStartDate || customEndDate || selectedDayFilter) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFilter('all');
+                  setCustomDate('');
+                  setCustomStartDate('');
+                  setCustomEndDate('');
+                  setSelectedDayFilter(null);
+                }}
+                className="h-8 px-2 py-1 rounded-[6px] border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium font-sans flex items-center gap-1 transition-colors cursor-pointer"
+                title="Reset Date Range"
+              >
+                <X className="w-3 h-3" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
+
+            {/* Active Day Filter Indicator */}
+            {selectedDayFilter && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-[#3ecf8e] text-xs font-mono font-medium animate-in fade-in">
+                <span>Filter Day: {dateBounds.label}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDayFilter(null)}
+                  className="hover:opacity-75 cursor-pointer ml-1 text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  title="Clear day filter"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
           </div>
@@ -883,66 +650,73 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               placeholder="Select branch..."
             />
           </div>
-        </div>
+      </div>
 
-      {/* Safe Deposit Alert Banner */}
-      {safeDropExceeded && (
-        <div className="p-3.5 rounded-[12px] bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-sans">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
-            <div>
-              <strong className="block font-medium text-amber-800 dark:text-amber-300">Move Cash to Safe (Cash is High)</strong>
-              <span className="text-[11px] text-amber-700 dark:text-amber-200/80">
-                Cash in box ({formatINR(currentCashBalance)}) is over ₹50,000. Please move extra cash to the safe.
-              </span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              triggerHaptic('selection');
-              setIsSafeDropOpen(true);
-            }}
-            className="h-8 px-3.5 py-1.5 rounded-[6px] bg-amber-500 hover:bg-amber-400 text-[#171717] font-medium text-xs font-sans flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0 shadow-2xs"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-[#171717] stroke-[2.5]" />
-            <span>Move to Safe ({formatINR(Math.max(0, currentCashBalance - 40000))})</span>
-          </button>
-        </div>
-      )}
-
-      {/* 2. Top Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+      {/* 2. Cash & UPI Balances Telemetry Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* KPI 1: Cash Drawer Till */}
         <MetricCard
-          label="Cash in Box"
-          value={formatINR(currentCashBalance)}
-          subValue="Cash notes in till"
-          statusDotColor="#3ecf8e"
-          icon={Wallet}
-        />
-
-        <MetricCard
-          label="Bank UPI Balance"
-          value={formatINR(currentUpiBalance)}
-          subValue="Shop UPI balance"
-          statusDotColor="#38bdf8"
-          icon={Building2}
-        />
-
-        <MetricCard
-          label="Total Available"
-          value={formatINR(currentCashBalance + currentUpiBalance)}
-          subValue="Cash + UPI combined"
-          statusDotColor="#3ecf8e"
-          badge="READY"
+          label="Cash Drawer Till"
+          value={
+            <>
+              <span className="sm:hidden">{formatCompactINR(currentCashBalance)}</span>
+              <span className="hidden sm:inline">{formatINR(currentCashBalance)}</span>
+            </>
+          }
+          subValue="Verified Physical Drawer Cash"
+          badge="CASH TILL"
           badgeColor="emerald"
           icon={Coins}
         />
+
+        {/* KPI 2: UPI Float */}
+        <MetricCard
+          label="UPI Float"
+          value={
+            <>
+              <span className="sm:hidden">{formatCompactINR(currentUpiBalance)}</span>
+              <span className="hidden sm:inline">{formatINR(currentUpiBalance)}</span>
+            </>
+          }
+          subValue="Verified Digital UPI Float"
+          badge="ONLINE UPI"
+          badgeColor="blue"
+          icon={Building2}
+        />
+
+        {/* KPI 3: Cash Inflows (+ Credit) */}
+        <MetricCard
+          label="Cash Inflows (Credits)"
+          value={
+            <>
+              <span className="sm:hidden">+{formatCompactINR(dailyCashSummary.periodInflows)}</span>
+              <span className="hidden sm:inline">+{formatINR(dailyCashSummary.periodInflows)}</span>
+            </>
+          }
+          subValue={`${treasurySummary.cashTopupCount} cash additions in period`}
+          statusDotColor="#3ecf8e"
+          badge="FLOAT IN"
+          badgeColor="emerald"
+          icon={TrendingUp}
+        />
+
+        {/* KPI 4: Cash Outflows (- Debit) */}
+        <MetricCard
+          label="Cash Outflows (Debits)"
+          value={
+            <>
+              <span className="sm:hidden">-{formatCompactINR(dailyCashSummary.periodOutflows)}</span>
+              <span className="hidden sm:inline">-{formatINR(dailyCashSummary.periodOutflows)}</span>
+            </>
+          }
+          subValue={`${treasurySummary.cashExpenseCount} cash expense vouchers`}
+          badge="SPENT"
+          badgeColor="neutral"
+          icon={Receipt}
+        />
       </div>
 
-      {/* 3. Main Dual Column Content */}
-      {/* 3. Add Cash / UPI Inflow Card */}
+      {/* 3. Top Action: Add Cash / UPI Inflow Card */}
       <div className="space-y-4">
         <form onSubmit={handleOpenPreview} className="stagger-card p-4 rounded-[12px] bg-white dark:bg-[#171717] border border-slate-200 dark:border-[#242424] space-y-3.5 shadow-xs">
           <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#242424] gap-2">
@@ -976,7 +750,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
                       : 'text-slate-500 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-white border border-transparent'
                   )}
                 >
-                  Bank UPI
+                  Online UPI
                 </button>
               </div>
 
@@ -992,12 +766,12 @@ export const CashDrawerTreasuryPage: React.FC = () => {
           </div>
 
           {/* Form Fields in 3-Column Responsive Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             {/* Amount Input */}
             <div className="space-y-1 font-sans">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-medium text-slate-800 dark:text-[#e0e0e0]">
-                  {walletType === 'Cash' ? 'Cash Amount (₹) *' : 'Bank / UPI Amount (₹) *'}
+                  {walletType === 'Cash' ? 'Cash Amount (₹) *' : 'UPI Amount (₹) *'}
                 </label>
                 {Number(amount) > 0 && (
                   <span className="text-[11px] font-mono text-emerald-600 dark:text-[#3ecf8e]">
@@ -1041,7 +815,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
             </div>
 
             {/* Reference Remarks */}
-            <div className="space-y-1 font-sans sm:col-span-2 lg:col-span-1">
+            <div className="space-y-1 font-sans">
               <label className="block text-xs font-medium text-slate-800 dark:text-[#e0e0e0]">
                 Reason / Note
               </label>
@@ -1049,7 +823,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
                 type="text"
                 value={referenceNotes}
                 onChange={(e) => setReferenceNotes(e.target.value)}
-                placeholder="e.g. Morning cash from safe / Owner topup"
+                placeholder="e.g. Morning cash / Owner topup"
                 className="w-full h-10 min-h-[40px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[6px] px-3 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 shadow-2xs"
               />
             </div>
@@ -1105,509 +879,36 @@ export const CashDrawerTreasuryPage: React.FC = () => {
         </form>
       </div>
 
-      {/* 4. Full Advanced Treasury Ledger & Accounting Audit Register Table */}
-      <div className="stagger-card p-4 rounded-[12px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] space-y-4 shadow-xs">
-        {/* Table Header with Filters & Scope Selector */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-200/80 dark:border-white/10">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-[#3ecf8e]" />
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white font-sans">
-                Full Treasury Ledger &amp; Cash / Bank Flow Audit Register
-              </h2>
-            </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-200 dark:border-[#3ecf8e]/20">
-              {filteredAllocations.length} of {allLedgerEntries.length} records
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Scope / Direction Filter Segmented Control */}
-            <div className="inline-flex rounded-[6px] p-0.5 bg-slate-100 dark:bg-black/30 border border-slate-200/80 dark:border-white/10 text-xs overflow-x-auto max-w-full">
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('ALL');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'ALL'
-                    ? 'bg-white dark:bg-[#282828] text-slate-900 dark:text-white font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                All Flows ({allLedgerEntries.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('INFLOW');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'INFLOW'
-                    ? 'bg-white dark:bg-[#282828] text-emerald-600 dark:text-[#3ecf8e] font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                + Inflows ({treasurySummary.creditCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('OUTFLOW');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'OUTFLOW'
-                    ? 'bg-white dark:bg-[#282828] text-rose-600 dark:text-rose-400 font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                - Outflows ({treasurySummary.debitCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('Float_Topup');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'Float_Topup'
-                    ? 'bg-white dark:bg-[#282828] text-emerald-600 dark:text-[#3ecf8e] font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                Top-ups ({treasurySummary.topupCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('Safe_Drop');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'Safe_Drop'
-                    ? 'bg-white dark:bg-[#282828] text-amber-600 dark:text-amber-400 font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                Safe Drops ({treasurySummary.safeDropCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('selection');
-                  setScopeFilter('Expense_Voucher');
-                  setCurrentPage(1);
-                }}
-                className={cn(
-                  'px-2 py-1 rounded-[4px] text-[11px] font-sans transition-all cursor-pointer whitespace-nowrap',
-                  scopeFilter === 'Expense_Voucher'
-                    ? 'bg-white dark:bg-[#282828] text-rose-600 dark:text-rose-400 font-medium shadow-xs'
-                    : 'text-slate-500 dark:text-[#888] hover:text-slate-900 dark:hover:text-white'
-                )}
-              >
-                Expenses ({treasurySummary.expenseCount})
-              </button>
-            </div>
-
-            {/* Sort Order Selector */}
-            <div className="w-36">
-              <select
-                value={sortBy}
-                onChange={(e) => {
-                  setSortBy(e.target.value as SortOption);
-                  setCurrentPage(1);
-                }}
-                aria-label="Sort Order"
-                className="w-full h-8 bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[6px] px-2 text-xs text-slate-700 dark:text-zinc-300 font-sans focus:outline-none focus:border-[#3ecf8e] cursor-pointer"
-              >
-                <option value="newest">Newest First</option>
-                <option value="oldest">Oldest First</option>
-                <option value="highest_amount">Highest Amount</option>
-                <option value="lowest_amount">Lowest Amount</option>
-              </select>
-            </div>
-
-            {/* Page Size Selector */}
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              aria-label="Rows per page"
-              className="h-8 bg-slate-50 dark:bg-[#141414] border border-slate-200 dark:border-[#282828] rounded-[6px] px-2 text-xs text-slate-700 dark:text-zinc-300 font-mono focus:outline-none focus:border-[#3ecf8e] cursor-pointer"
-            >
-              <option value={15}>15 rows</option>
-              <option value={25}>25 rows</option>
-              <option value={50}>50 rows</option>
-              <option value={100}>100 rows</option>
-              <option value={250}>250 rows</option>
-            </select>
-          </div>
-        </div>
-
-        {/* 6-KPI Diagnostic Matrix Strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs font-mono">
-          <div className="p-2.5 rounded-[10px] bg-emerald-500/5 border border-emerald-500/20">
-            <span className="text-[10px] text-slate-500 dark:text-[#A1A1A1] block font-sans">Total Inflow (Credits):</span>
-            <span className="text-emerald-600 dark:text-[#3ecf8e] font-semibold text-xs tabular-nums block mt-0.5">
-              +{formatINR(treasurySummary.totalMoneyIn)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              Cash: {formatINR(treasurySummary.totalCashIn)} ({treasurySummary.cashTopupCount}) | UPI: {formatINR(treasurySummary.totalUpiIn)} ({treasurySummary.upiTopupCount})
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-[10px] bg-rose-500/5 border border-rose-500/20">
-            <span className="text-[10px] text-slate-500 dark:text-[#A1A1A1] block font-sans">Total Outflow (Debits):</span>
-            <span className="text-rose-600 dark:text-rose-400 font-semibold text-xs tabular-nums block mt-0.5">
-              -{formatINR(treasurySummary.totalMoneyOut)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              Cash: -{formatINR(treasurySummary.totalCashOut)} | UPI: -{formatINR(treasurySummary.totalUpiOut)}
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-[10px] bg-emerald-500/5 border border-emerald-500/25">
-            <span className="text-[10px] text-emerald-700 dark:text-emerald-400 block font-sans font-medium">Net Cash in Box:</span>
-            <span className={cn(
-              "font-semibold text-xs tabular-nums block mt-0.5",
-              treasurySummary.netCash >= 0 ? "text-emerald-600 dark:text-[#3ecf8e]" : "text-rose-600 dark:text-rose-400"
-            )}>
-              {treasurySummary.netCash >= 0 ? '+' : ''}{formatINR(treasurySummary.netCash)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              In {formatINR(treasurySummary.totalCashIn)} − Out {formatINR(treasurySummary.totalCashOut)}
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-[10px] bg-sky-500/5 border border-sky-500/25">
-            <span className="text-[10px] text-sky-700 dark:text-sky-400 block font-sans font-medium">Net Bank UPI:</span>
-            <span className={cn(
-              "font-semibold text-xs tabular-nums block mt-0.5",
-              treasurySummary.netUpi >= 0 ? "text-sky-600 dark:text-sky-400" : "text-rose-600 dark:text-rose-400"
-            )}>
-              {treasurySummary.netUpi >= 0 ? '+' : ''}{formatINR(treasurySummary.netUpi)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              In {formatINR(treasurySummary.totalUpiIn)} − Out {formatINR(treasurySummary.totalUpiOut)}
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-[10px] bg-slate-50/80 dark:bg-black/20 border border-slate-200/80 dark:border-white/10">
-            <span className="text-[10px] text-slate-500 dark:text-[#A1A1A1] block font-sans">Float Top-ups:</span>
-            <span className="text-slate-800 dark:text-[#EDEDED] font-semibold text-xs tabular-nums block mt-0.5">
-              +{formatINR(treasurySummary.totalFloatTopups)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              {treasurySummary.cashTopupCount} Cash + {treasurySummary.upiTopupCount} UPI additions
-            </span>
-          </div>
-
-          <div className="p-2.5 rounded-[10px] bg-purple-500/5 border border-purple-500/20">
-            <span className="text-[10px] text-slate-500 dark:text-[#A1A1A1] block font-sans">Expense Vouchers:</span>
-            <span className="text-purple-600 dark:text-purple-400 font-semibold text-xs tabular-nums block mt-0.5">
-              -{formatINR(treasurySummary.totalExpenses)}
-            </span>
-            <span className="text-[9px] text-slate-400 dark:text-zinc-500 font-sans block mt-0.5">
-              {treasurySummary.expenseCount} vouchers ({treasurySummary.cashExpenseCount} Cash, {treasurySummary.upiExpenseCount} UPI)
-            </span>
-          </div>
-        </div>
-
-        {/* Full High-Density Accounting Audit Table */}
-        <div className="border border-slate-200 dark:border-[#242424] rounded-[8px] overflow-hidden bg-white dark:bg-[#171717]">
-          <div className="max-h-[620px] overflow-x-auto overflow-y-auto">
-            <table className="w-full border-collapse text-left text-xs font-mono">
-              <thead className="sticky top-0 z-10">
-                <tr className="border-b border-slate-200 dark:border-[#242424] bg-slate-50 dark:bg-[#141414] text-[11px] text-slate-500 dark:text-[#A1A1A1]">
-                  <th className="py-2.5 px-3">#</th>
-                  <th className="py-2.5 px-3">Date &amp; Time</th>
-                  <th className="py-2.5 px-3">Flow &amp; Scope</th>
-                  <th className="py-2.5 px-3">Wallet Channel</th>
-                  <th className="py-2.5 px-3 text-right">Inflow (+ Credit)</th>
-                  <th className="py-2.5 px-3 text-right">Outflow (- Debit)</th>
-                  <th className="py-2.5 px-3 text-right">Running Balance (₹)</th>
-                  <th className="py-2.5 px-3">Particulars, Mode &amp; Denominations</th>
-                  <th className="py-2.5 px-3">Cashier &amp; Approver</th>
-                  <th className="py-2.5 px-3">Slip / Voucher #</th>
-                  <th className="py-2.5 px-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-[#242424]">
-                {filteredAllocations.length === 0 ? (
-                  <tr>
-                    <td colSpan={11} className="py-12 px-4 text-center">
-                      <EmptyState
-                        icon={History}
-                        title="No treasury ledger records found"
-                        description="No float top-ups, safe drops, or wallet transactions match the selected filter criteria."
-                        actionLabel="Reset Search & Filters"
-                        onAction={() => {
-                          setLedgerSearch('');
-                          setScopeFilter('ALL');
-                          setLedgerWalletFilter('ALL');
-                          setDateFilter('this_month');
-                        }}
-                      />
-                    </td>
-                  </tr>
-                ) : (
-                  paginatedAllocations.map((entry, idx) => {
-                    const credit = Number(entry.credit_amount) || 0;
-                    const debit = Number(entry.debit_amount) || 0;
-                    const parsed = parseLedgerNotes(entry.remarks);
-                    const isUpi = entry.wallet_type === 'UPI';
-                    const isCredit = credit > 0;
-                    const isSafeDrop = entry.transaction_type === 'Safe_Drop';
-                    const isExpense = entry.transaction_type === 'Expense_Voucher';
-                    const entryKey = entry.id || `${entry.created_at}-${entry.credit_amount}-${entry.debit_amount}`;
-                    const runningBal = entriesWithRunningBalance.get(entryKey)?.runningCombined;
-                    const rowSeq = (currentPage - 1) * pageSize + idx + 1;
-                    const refCode = entry.reference_number || (entry.id ? String(entry.id).slice(0, 8).toUpperCase() : 'TRZ-AUTO');
-
-                    return (
-                      <tr
-                        key={entryKey}
-                        className="hover:bg-slate-50/80 dark:hover:bg-[#1a1a1a] transition-colors group"
-                      >
-                        {/* 1. Sequence Number */}
-                        <td className="py-2.5 px-3 text-slate-400 dark:text-zinc-500 font-mono text-[11px] whitespace-nowrap">
-                          #{rowSeq}
-                        </td>
-
-                        {/* 2. Date & Time */}
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[11px] text-slate-800 dark:text-zinc-200 font-mono font-semibold">
-                              {formatDate(entry.created_at, 'dd MMM yyyy')}
-                            </span>
-                            <span className="text-[10px] text-slate-400 dark:text-zinc-500 font-mono">
-                              {formatDate(entry.created_at, 'HH:mm:ss')} ({formatDate(entry.created_at, 'EEE')})
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* 3. Flow Direction & Scope Badge */}
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="flex flex-col gap-1">
-                            {isCredit ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-sans font-bold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-200 dark:border-emerald-500/20 w-fit">
-                                <ArrowDownLeft className="w-2.5 h-2.5 stroke-[2.5]" />
-                                INFLOW (+)
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-sans font-bold bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20 w-fit">
-                                <ArrowUpRight className="w-2.5 h-2.5 stroke-[2.5]" />
-                                OUTFLOW (-)
-                              </span>
-                            )}
-
-                            <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-sans">
-                              {isSafeDrop
-                                ? 'Safe Vault Deposit'
-                                : isExpense
-                                ? 'Expense Voucher'
-                                : entry.transaction_type === 'Float_Topup'
-                                ? 'Cash Float Top-up'
-                                : entry.transaction_type || 'Adjustment'}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* 4. Wallet Channel */}
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <span className={cn(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border font-medium',
-                            isUpi
-                              ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-500/20'
-                              : 'bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border-emerald-200 dark:border-[#3ecf8e]/20'
-                          )}>
-                            {isUpi ? <Building2 className="w-2.5 h-2.5" /> : <Coins className="w-2.5 h-2.5" />}
-                            {entry.wallet_type === 'UPI' ? 'Bank UPI' : 'Cash Drawer Till'}
-                          </span>
-                        </td>
-
-                        {/* 5. Inflow Credit (+) */}
-                        <td className="py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap">
-                          {credit > 0 ? (
-                            <span className="text-emerald-600 dark:text-[#3ecf8e] font-mono font-bold text-xs">
-                              +₹{formatINR(credit)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300 dark:text-zinc-600 font-mono text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* 6. Outflow Debit (-) */}
-                        <td className="py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap">
-                          {debit > 0 ? (
-                            <span className="text-rose-600 dark:text-rose-400 font-mono font-bold text-xs">
-                              -₹{formatINR(debit)}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300 dark:text-zinc-600 font-mono text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* 7. Progressive Running Balance */}
-                        <td className="py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap">
-                          <span className="font-mono text-xs text-slate-900 dark:text-white font-bold bg-slate-50 dark:bg-black/30 px-2 py-0.5 rounded border border-slate-200/60 dark:border-white/5">
-                            ₹{formatINR(runningBal !== undefined ? runningBal : (Number(entry.running_balance) || 0))}
-                          </span>
-                        </td>
-
-                        {/* 8. Particulars, Mode & Denominations */}
-                        <td className="py-2.5 px-3 max-w-[280px]">
-                          <div className="space-y-1">
-                            <span className="block truncate font-sans text-slate-900 dark:text-zinc-100 text-xs font-medium" title={parsed.title}>
-                              {parsed.title}
-                            </span>
-                            <div className="flex flex-wrap items-center gap-1">
-                              {parsed.modeDetails && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-[9px] font-mono text-sky-700 dark:text-sky-300">
-                                  {parsed.modeDetails}
-                                </span>
-                              )}
-                              {parsed.chips.map((chip, cIdx) => (
-                                <span
-                                  key={cIdx}
-                                  className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-[#222222] border border-slate-200 dark:border-[#333333] text-[9px] font-mono text-slate-700 dark:text-[#A1A1A1] tabular-nums"
-                                >
-                                  {chip}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* 9. Cashier & Approver */}
-                        <td className="py-2.5 px-3">
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1 font-sans text-xs text-slate-900 dark:text-white font-medium">
-                              <User className="w-2.5 h-2.5 text-slate-400" />
-                              <span className="truncate">{entry.cashier_name || 'Cashier'}</span>
-                            </div>
-                            {entry.authorized_by_name && (
-                              <span className="block text-[10px] text-slate-400 dark:text-zinc-500 font-sans truncate">
-                                Auth: <strong className="font-medium text-slate-600 dark:text-zinc-400">{entry.authorized_by_name}</strong>
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* 10. Slip / Voucher # */}
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1">
-                            <span className="font-mono text-[11px] text-slate-600 dark:text-zinc-400 bg-slate-50 dark:bg-black/30 px-1.5 py-0.5 rounded border border-slate-200/60 dark:border-white/5 font-semibold">
-                              {refCode}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyRef(refCode)}
-                              className="p-1 rounded text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer"
-                              title="Copy slip reference"
-                            >
-                              {copiedRef === refCode ? (
-                                <CheckCheck className="w-3 h-3 text-[#3ecf8e]" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
-
-                        {/* 11. Action */}
-                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleViewSlip(entry)}
-                              className="px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222222] text-slate-700 dark:text-zinc-300 text-xs font-sans inline-flex items-center gap-1 transition-all cursor-pointer"
-                              title="View slip details"
-                            >
-                              <Eye className="w-3 h-3 text-slate-400" />
-                              <span>Slip</span>
-                            </button>
-
-                            {(isDeveloper || user?.role_code === 'Super_Admin' || user?.role_code === 'Store_Manager') && (
-                              <button
-                                type="button"
-                                disabled={purgingId === (entry.id || entry.reference_number)}
-                                onClick={() => handlePurgeEntry(entry)}
-                                className="p-1 rounded-[6px] border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs transition-all cursor-pointer disabled:opacity-40"
-                                title="Delete / Purge errant ledger entry"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Treasury Table Pagination Footer */}
-        <div className="p-3 bg-slate-50 dark:bg-[#171717] border border-slate-200 dark:border-[#242424] rounded-[8px] flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-mono">
-          <div className="flex items-center gap-2 text-slate-600 dark:text-[#A1A1A1]">
-            <span>
-              Showing{' '}
-              <strong className="text-slate-900 dark:text-white font-mono">
-                {filteredAllocations.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
-              </strong>{' '}
-              to{' '}
-              <strong className="text-slate-900 dark:text-white font-mono">
-                {Math.min(currentPage * pageSize, filteredAllocations.length)}
-              </strong>{' '}
-              of <strong className="text-slate-900 dark:text-white font-mono">{filteredAllocations.length}</strong> entries (Page {currentPage} of {totalPages})
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={currentPage <= 1}
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] text-slate-700 dark:text-[#EDEDED] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#222222] text-xs font-sans transition-colors cursor-pointer"
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              disabled={currentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] text-slate-700 dark:text-[#EDEDED] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-[#222222] text-xs font-sans transition-colors cursor-pointer"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 5. Safe Drop Slide-Over Drawer */}
-      <SafeDropDrawer
-        isOpen={isSafeDropOpen}
-        onClose={() => setIsSafeDropOpen(false)}
-        branchId={selectedBranch}
+      {/* 4. Verified Day-by-Day Cash Statement */}
+      <DailyCashDrawerStatement
+        ledgerEntries={allLedgerEntries}
         currentCashBalance={currentCashBalance}
+        currentUpiBalance={currentUpiBalance}
+        selectedBranchId={selectedBranch}
+        onSelectDate={setSelectedDayFilter}
+        selectedDate={selectedDayFilter}
+        defaultExpanded={true}
+        contextTitle="Cash Drawer & UPI Day-by-Day Statement"
+      />
+
+      {/* 5. Full Cash Passbook Register & Advance Table */}
+      <TreasuryPassbookTable
+        entries={allLedgerEntries}
+        currentCashBalance={currentCashBalance}
+        currentUpiBalance={currentUpiBalance}
+        selectedBranchId={selectedBranch}
+        selectedDayFilter={selectedDayFilter}
+        onClearDayFilter={() => setSelectedDayFilter(null)}
+        voucherMap={voucherMap}
+      />
+
+      {/* Daily EOD Till Lock & Denomination Counter Modal (Beta) */}
+      <DailyEodTillModal
+        isOpen={isEodModalOpen}
+        onClose={() => setIsEodModalOpen(false)}
+        branchId={selectedBranch}
+        branchCode={selectedBranch.replace(/^Aellp-/, '')}
+        systemCashBalance={currentCashBalance}
         onSuccess={loadTreasuryData}
       />
 
@@ -1636,7 +937,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Voucher / Ref #</span>
                 <span className="font-semibold text-slate-900 dark:text-white font-mono">
-                  {viewLedgerEntry.reference_number || (viewLedgerEntry.id ? String(viewLedgerEntry.id).slice(0, 8).toUpperCase() : 'TRZ-AUTO')}
+                  {formatVoucherNumber(viewLedgerEntry.reference_number || (viewLedgerEntry.id ? String(viewLedgerEntry.id).slice(0, 8).toUpperCase() : 'TRZ-AUTO'))}
                 </span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
@@ -1648,7 +949,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Wallet Account</span>
                 <span className="font-semibold text-slate-900 dark:text-white font-mono">
-                  {viewLedgerEntry.wallet_type === 'UPI' ? 'Bank UPI Account' : 'Cash Drawer Till Box'}
+                  {viewLedgerEntry.wallet_type === 'UPI' ? 'Online UPI Account' : 'Cash Drawer Till Box'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
@@ -1687,8 +988,8 @@ export const CashDrawerTreasuryPage: React.FC = () => {
                     Number(viewLedgerEntry.credit_amount) > 0 ? "text-emerald-600 dark:text-[#3ecf8e]" : "text-rose-600 dark:text-rose-400"
                   )}>
                     {Number(viewLedgerEntry.credit_amount) > 0
-                      ? `+₹${formatINR(Number(viewLedgerEntry.credit_amount))}`
-                      : `-₹${formatINR(Number(viewLedgerEntry.debit_amount))}`}
+                      ? `+${formatINR(Number(viewLedgerEntry.credit_amount))}`
+                      : `-${formatINR(Number(viewLedgerEntry.debit_amount))}`}
                   </div>
                   <div className="text-[10px] text-slate-500 dark:text-zinc-400 font-sans">
                     {numberToWordsINR(Number(viewLedgerEntry.credit_amount || viewLedgerEntry.debit_amount) || 0)}
@@ -1700,7 +1001,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
             <div className="flex items-center justify-between pt-2">
               <button
                 type="button"
-                onClick={() => handleCopyRef(viewLedgerEntry.reference_number || String(viewLedgerEntry.id || ''))}
+                onClick={() => handleCopyRef(formatVoucherNumber(viewLedgerEntry.reference_number || String(viewLedgerEntry.id || '')))}
                 className="px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] text-slate-700 dark:text-zinc-300 text-xs font-sans inline-flex items-center gap-1.5 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#202020]"
               >
                 <Copy className="w-3.5 h-3.5" />
@@ -1747,7 +1048,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Wallet</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{walletType === 'Cash' ? 'Cash Box' : 'Bank UPI'}</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{walletType === 'Cash' ? 'Cash Box' : 'Online UPI'}</span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Date</span>
@@ -1755,7 +1056,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Reason</span>
-                <span className="font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{referenceNotes || (walletType === 'Cash' ? 'Cash Box Inflow' : 'Bank UPI Inflow')}</span>
+                <span className="font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{referenceNotes || (walletType === 'Cash' ? 'Cash Box Inflow' : 'UPI Float Inflow')}</span>
               </div>
               <div className="pt-2 border-t border-slate-200 dark:border-[#242424] flex justify-between items-baseline">
                 <span className="text-xs uppercase font-sans text-slate-500">Amount</span>
