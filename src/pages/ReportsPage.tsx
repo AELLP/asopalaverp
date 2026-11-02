@@ -951,7 +951,7 @@ ${voucherXmls}
         }
       });
 
-    return list.slice(0, 200);
+    return list;
   }, [approvedVouchers, tallyViewMode, splitsMap]);
 
   const currentBranchLabel =

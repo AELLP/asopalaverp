@@ -463,7 +463,7 @@ class ERPService {
           .from('wallet_ledger')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(500);
+          .limit(10000);
 
         if (!isAll) {
           query = query.or(`branch_id.eq.${canonicalId},branch_id.eq.${code},branch_code.eq.${code}`);
@@ -472,7 +472,7 @@ class ERPService {
         const { data, error } = await query;
         if (!error && data !== null) {
           const clean = sanitizeAndDeduplicateLedger(data);
-          localStorage.setItem(`asopalav_ledger_${canonicalId}`, JSON.stringify(clean.slice(0, 200)));
+          localStorage.setItem(`asopalav_ledger_${canonicalId}`, JSON.stringify(clean.slice(0, 2000)));
           ledgerMemoryCache[canonicalId] = { entries: clean, timestamp: Date.now() };
           return clean;
         }
@@ -5760,7 +5760,7 @@ class ERPService {
     return null;
   }
 
-  async getAllEodTillLocks(branchId?: string, limit = 60): Promise<import('@/types/database').EodTillLockRecord[]> {
+  async getAllEodTillLocks(branchId?: string, limit = 1000): Promise<import('@/types/database').EodTillLockRecord[]> {
     try {
       let query = supabase
         .from('eod_till_locks')
