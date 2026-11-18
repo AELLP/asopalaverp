@@ -4,6 +4,7 @@ import { useUIStore } from '@/store/uiStore';
 import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { formatINR, formatDate, formatVoucherNumber, cn, triggerHaptic, normalizeDateToYMD } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 import {
   Search,
   Plus,
@@ -21,6 +22,7 @@ import {
   ArrowDown,
   X,  Layers,
   Coins,  CreditCard,  FileSpreadsheet,  SlidersHorizontal,
+  IndianRupee,
   BarChart3,  Building2,  RotateCcw,  User,
   Tag,  HandCoins,
   Coffee,
@@ -273,20 +275,65 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false);
   const [activeRowDropdownId, setActiveRowDropdownId] = useState<string | null>(null);
 
-  const categorySelectOptions = useMemo(() => [
-    { value: 'ALL', label: `All Categories (${categories.length})` },
-    ...categories.map((c) => ({ value: c.category_name, label: c.category_name })),
-  ], [categories]);
+  const categorySelectOptions = useMemo(() => {
+    const parentCats = Array.from(
+      new Set(categories.map((c) => c.parent_category || getParentCategory(c.category_name, c.color_theme)))
+    ).filter(Boolean);
 
-  const departmentSelectOptions = useMemo(() => [
-    { value: 'ALL', label: `All Departments (${departments.length})` },
-    ...departments.map((d) => ({ value: d.department_name, label: d.department_name })),
-  ], [departments]);
+    const parentGroupOptions = parentCats.sort().map((p) => ({
+      value: `PARENT:${p}`,
+      label: `All ${p}`,
+      group: 'Filter by Parent Group',
+      badge: 'Parent',
+    }));
+
+    const childOptions = [...categories]
+      .map((c) => ({
+        value: c.category_name,
+        label: c.category_name,
+        group: c.parent_category || getParentCategory(c.category_name, c.color_theme),
+      }))
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+
+    return [
+      { value: 'ALL', label: `All Categories (${categories.length})` },
+      ...parentGroupOptions,
+      ...childOptions,
+    ];
+  }, [categories]);
+
+  const departmentSelectOptions = useMemo(() => {
+    const parentDivs = Array.from(
+      new Set(departments.map((d) => d.parent_division_name || getParentDepartment(d.department_code || d.department_name).name))
+    ).filter(Boolean);
+
+    const divisionOptions = parentDivs.sort().map((p) => ({
+      value: `DIVISION:${p}`,
+      label: `All ${p}`,
+      group: 'Filter by Parent Division',
+      badge: 'Division',
+    }));
+
+    const childOptions = [...departments]
+      .map((d) => ({
+        value: d.department_name,
+        label: d.department_name,
+        badge: d.department_code,
+        group: d.parent_division_name || getParentDepartment(d.department_code || d.department_name).name,
+      }))
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+
+    return [
+      { value: 'ALL', label: `All Departments (${departments.length})` },
+      ...divisionOptions,
+      ...childOptions,
+    ];
+  }, [departments]);
 
   const paymentModeSelectOptions = useMemo(() => [
     { value: 'ALL', label: 'All Payment Modes' },
-    { value: 'Physical_Cash', label: 'Physical Cash' },
-    { value: 'Online_UPI', label: 'Online UPI' },
+    { value: 'Physical_Cash', label: 'Cash' },
+    { value: 'Online_UPI', label: 'UPI' },
   ], []);
 
   const statusSelectOptions = useMemo(() => [
@@ -420,26 +467,42 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
       );
     }
 
-    // Dropdown filters (supports comma-separated multi-split categories and departments)
+    // Dropdown filters (supports comma-separated multi-split categories, departments, and parent groups)
     if (selectedCategory !== 'ALL') {
-      result = result.filter((v) => {
-        if (!v.category_name) return false;
-        if (v.category_name === selectedCategory) return true;
-        return v.category_name
-          .split(',')
-          .map((c) => c.trim())
-          .includes(selectedCategory);
-      });
+      if (selectedCategory.startsWith('PARENT:')) {
+        const targetParent = selectedCategory.replace('PARENT:', '');
+        result = result.filter((v) => {
+          const vParent = getParentCategory(v.category_name);
+          return vParent === targetParent;
+        });
+      } else {
+        result = result.filter((v) => {
+          if (!v.category_name) return false;
+          if (v.category_name === selectedCategory) return true;
+          return v.category_name
+            .split(',')
+            .map((c) => c.trim())
+            .includes(selectedCategory);
+        });
+      }
     }
     if (selectedDept !== 'ALL') {
-      result = result.filter((v) => {
-        if (!v.department_name) return false;
-        if (v.department_name === selectedDept) return true;
-        return v.department_name
-          .split(',')
-          .map((d) => d.trim())
-          .includes(selectedDept);
-      });
+      if (selectedDept.startsWith('DIVISION:')) {
+        const targetDivision = selectedDept.replace('DIVISION:', '');
+        result = result.filter((v) => {
+          const vDiv = getParentDepartment(v.department_code || v.department_name || '').name;
+          return vDiv === targetDivision;
+        });
+      } else {
+        result = result.filter((v) => {
+          if (!v.department_name) return false;
+          if (v.department_name === selectedDept) return true;
+          return v.department_name
+            .split(',')
+            .map((d) => d.trim())
+            .includes(selectedDept);
+        });
+      }
     }
     if (selectedMode !== 'ALL') {
       result = result.filter((v) => v.payment_method === selectedMode);
@@ -823,57 +886,6 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
     }
   };
 
-  const handleExportCSV = () => {
-    triggerHaptic('success');
-    const headers = ['Voucher No', 'Date', 'Payee', 'Category', 'Department', 'Payment Mode', 'Gross Amount (INR)', 'Status', 'Remarks'];
-    const rows = filteredVouchers.map((v) => [
-      v.voucher_number,
-      v.payment_date || (v.created_at ? v.created_at.slice(0, 10) : ''),
-      `"${(v.recipient_name || '').replace(/"/g, '""')}"`,
-      `"${(v.category_name || '').replace(/"/g, '""')}"`,
-      `"${(v.department_name || '').replace(/"/g, '""')}"`,
-      v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
-      v.total_amount,
-      v.status || 'Approved',
-      `"${(v.remarks || '').replace(/"/g, '""')}"`,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Asopalav_Expenses_${effectiveStartDate || 'All'}_to_${effectiveEndDate || 'Present'}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    showToast({ type: 'success', title: 'Export Generated', message: `Exported ${filteredVouchers.length} vouchers to CSV.` });
-  };
-
-  const handleExportSelectedCSV = () => {
-    triggerHaptic('success');
-    const selectedList = vouchers.filter((v) => selectedIds.has(v.id));
-    const headers = ['Voucher No', 'Date', 'Payee', 'Category', 'Department', 'Payment Mode', 'Gross Amount (INR)', 'Status', 'Remarks'];
-    const rows = selectedList.map((v) => [
-      v.voucher_number,
-      v.payment_date || (v.created_at ? v.created_at.slice(0, 10) : ''),
-      `"${(v.recipient_name || '').replace(/"/g, '""')}"`,
-      `"${(v.category_name || '').replace(/"/g, '""')}"`,
-      `"${(v.department_name || '').replace(/"/g, '""')}"`,
-      v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
-      v.total_amount,
-      v.status || 'Approved',
-      `"${(v.remarks || '').replace(/"/g, '""')}"`,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Asopalav_Selected_${selectedIds.size}_Vouchers.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    showToast({ type: 'success', title: 'Batch Exported', message: `Exported ${selectedIds.size} selected vouchers.` });
-  };
-
   const isAllCurrentPageSelected =
     paginatedVouchers.length > 0 && paginatedVouchers.every((v) => selectedIds.has(v.id));
 
@@ -1049,12 +1061,12 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={handleExportCSV}
+            onClick={() => setActivePage('reports')}
             className="px-2.5 py-1 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] hover:bg-slate-50 dark:hover:bg-[#202020] text-xs font-medium font-sans text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 cursor-pointer shadow-2xs"
-            title="Export filtered records to CSV"
+            title="Open Financial Reports Hub for all exports and audits (F5)"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span>Export CSV</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 text-[#3ecf8e]" />
+            <span>Reports Hub</span>
           </button>
 
           {showActionBanner && (
@@ -1538,7 +1550,7 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                 {[
                   { id: 'ALL', label: 'All Modes' },
                   { id: 'Physical_Cash', label: 'Cash' },
-                  { id: 'Online_UPI', label: 'Online UPI' },
+                  { id: 'Online_UPI', label: 'UPI' },
                 ].map((m) => {
                   const isSel = selectedMode === m.id;
                   return (
@@ -1735,11 +1747,12 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleExportSelectedCSV}
+              onClick={() => setActivePage('reports')}
               className="px-2.5 py-1.5 rounded-[6px] text-xs font-sans bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Open Financial Reports for centralized export"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export Selected CSV</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-[#171717]" />
+              <span>View in Reports Hub</span>
             </button>
             <button
               type="button"
@@ -2129,13 +2142,13 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
                           <div className="flex items-center gap-1.5 font-medium">
                             {v.payment_method === 'Physical_Cash' ? (
                               <>
-                                <Coins className="w-3.5 h-3.5 text-amber-600 dark:text-amber-500 shrink-0" />
-                                <span className="text-slate-800 dark:text-gray-300">Physical Cash</span>
+                                <IndianRupee className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] shrink-0 stroke-[2.2]" />
+                                <span className="text-slate-800 dark:text-gray-300">Cash</span>
                               </>
                             ) : (
                               <>
                                 <CreditCard className="w-3.5 h-3.5 text-sky-600 dark:text-sky-500 shrink-0" />
-                                <span className="text-slate-800 dark:text-gray-300">Online UPI</span>
+                                <span className="text-slate-800 dark:text-gray-300">UPI</span>
                               </>
                             )}
                           </div>
@@ -2840,11 +2853,12 @@ export const VoucherTable: React.FC<VoucherTableProps> = ({
               </button>
               <button
                 type="button"
-                onClick={handleExportCSV}
+                onClick={() => setActivePage('reports')}
                 className="h-8 px-3 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer font-sans shadow-xs"
+                title="Open Financial Reports for centralized export"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export CSV</span>
+                <FileSpreadsheet className="w-3.5 h-3.5 text-[#171717]" />
+                <span>Reports Hub</span>
               </button>
             </div>
           </div>

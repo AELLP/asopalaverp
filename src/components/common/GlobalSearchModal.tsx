@@ -185,7 +185,7 @@ export const GlobalSearchModal: React.FC = () => {
         category: 'vouchers',
         title: 'Add New Expense',
         categoryLabel: 'SHOP WORK',
-        subtitle: 'Pay bill from cash box or shop UPI QR',
+        subtitle: 'Pay bill with Cash or shop UPI QR',
         relevanceScore: 100,
         actionType: 'navigate' as const,
         actionPayload: { page: 'new-voucher' },
@@ -196,7 +196,7 @@ export const GlobalSearchModal: React.FC = () => {
         category: 'vouchers',
         title: 'Cash Drawer & UPI',
         categoryLabel: 'SHOP WORK',
-        subtitle: 'Check cash in box, UPI balance & drawer passbook',
+        subtitle: 'Check cash in drawer, UPI balance & passbook',
         relevanceScore: 90,
         actionType: 'navigate' as const,
         actionPayload: { page: 'treasury' },
@@ -328,13 +328,8 @@ export const GlobalSearchModal: React.FC = () => {
   // Group items by category for clear section headers
   const groupedSections = useMemo(() => {
     if (!query.trim()) {
-      const groups: Record<string, SearchResultItem[]> = {};
-      defaultCommands.forEach((item) => {
-        const label = item.categoryLabel || 'COMMANDS';
-        if (!groups[label]) groups[label] = [];
-        groups[label].push(item);
-      });
-      return Object.entries(groups).map(([title, items]) => ({ title, items }));
+      const groups = Object.groupBy(defaultCommands, (item) => item.categoryLabel || 'COMMANDS');
+      return Object.entries(groups).map(([title, items]) => ({ title, items: items || [] }));
     }
 
     const map = new Map<string, SearchResultItem[]>();
@@ -403,7 +398,7 @@ export const GlobalSearchModal: React.FC = () => {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search expenses, staff, cash box, or run a command..."
+              placeholder="Search expenses, staff, cash, UPI, or run a command..."
               className="w-full bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#707070] focus:outline-none font-sans"
             />
             {query && (

@@ -69,17 +69,7 @@ const STAFF_COLUMNS: { key: StaffColumnKey; label: string }[] = [
   { key: 'actions', label: 'Actions' },
 ];
 
-function downloadBlob(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
+
 
 interface ResetUserPasswordModalProps {
   isOpen: boolean;
@@ -135,14 +125,6 @@ const ResetUserPasswordModal: React.FC<ResetUserPasswordModalProps> = ({
     setError('');
   };
 
-  const setStandardDefault = () => {
-    setNewPassword('Admin@123');
-    setConfirmPassword('Admin@123');
-    setPin('1234');
-    setShowPassword(true);
-    setShowConfirmPassword(true);
-    setError('');
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,21 +331,12 @@ const ResetUserPasswordModal: React.FC<ResetUserPasswordModalProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={setStandardDefault}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-[6px] border border-slate-200 dark:border-[#282828] bg-slate-50 dark:bg-[#141414] hover:bg-slate-100 dark:hover:bg-[#202020] text-[11px] font-mono text-slate-700 dark:text-[#EDEDED] transition-all cursor-pointer shadow-xs"
-                  title="Use default password"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Use Default (Admin@123)</span>
-                </button>
-                <button
-                  type="button"
                   onClick={generateRandomPassword}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-[6px] border border-slate-200 dark:border-[#282828] bg-slate-50 dark:bg-[#141414] hover:bg-slate-100 dark:hover:bg-[#202020] text-[11px] font-mono text-slate-700 dark:text-[#EDEDED] transition-all cursor-pointer shadow-xs"
-                  title="Generate random password"
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-[6px] border border-slate-200 dark:border-[#282828] bg-slate-50 dark:bg-[#141414] hover:bg-slate-100 dark:hover:bg-[#202020] text-[11px] font-mono text-slate-700 dark:text-[#EDEDED] transition-all cursor-pointer shadow-xs"
+                  title="Generate strong random password"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Generate Random</span>
+                  <span>Generate Strong Random Password & PIN</span>
                 </button>
               </div>
 
@@ -441,6 +414,7 @@ const ResetUserPasswordModal: React.FC<ResetUserPasswordModalProps> = ({
                 </div>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   maxLength={4}
                   value={pin}
                   onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
@@ -564,6 +538,7 @@ export const StaffDirectoryPage: React.FC = () => {
   const canViewAll = isPrivilegedAdminRole(user?.role_code) || can('can_view_all_branches');
 
   const [activeTab, setActiveTab] = useState<'logins' | 'staff'>('logins');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [search, setSearch] = useState('');
   const [staffBranchFilter, setStaffBranchFilter] = useState(canViewAll ? (selectedBranchId || 'ALL') : (allowedBranches[0]?.branch_id || 'Aellp-ASI'));
   const [usersList, setUsersList] = useState<AppUser[]>([]);
@@ -789,6 +764,8 @@ export const StaffDirectoryPage: React.FC = () => {
 
   const filteredUsers = useMemo(() => {
     let list = usersList.filter((u) => {
+      if (statusFilter === 'active' && u.is_active === false) return false;
+      if (statusFilter === 'inactive' && u.is_active !== false) return false;
       if (!search) return true;
       const q = search.toLowerCase();
       return (
@@ -815,10 +792,12 @@ export const StaffDirectoryPage: React.FC = () => {
     });
 
     return list;
-  }, [usersList, search, userSortField, userSortOrder]);
+  }, [usersList, search, userSortField, userSortOrder, statusFilter]);
 
   const filteredStaff = useMemo(() => {
     let list = staff.filter((s) => {
+      if (statusFilter === 'active' && s.is_active === false) return false;
+      if (statusFilter === 'inactive' && s.is_active !== false) return false;
       const matchBranch = staffBranchFilter === 'ALL' || s.branch_id === staffBranchFilter;
       if (!matchBranch) return false;
       if (!search) return true;
@@ -849,7 +828,7 @@ export const StaffDirectoryPage: React.FC = () => {
     });
 
     return list;
-  }, [staff, search, staffBranchFilter, staffSortField, staffSortOrder]);
+  }, [staff, search, staffBranchFilter, staffSortField, staffSortOrder, statusFilter]);
 
   const currentRecordsCount = activeTab === 'logins' ? filteredUsers.length : filteredStaff.length;
   const totalPages = Math.max(1, Math.ceil(currentRecordsCount / pageSize));
@@ -904,6 +883,8 @@ export const StaffDirectoryPage: React.FC = () => {
   // Keyboard navigation ('/' to search, J/K focus, Space select, Enter edit)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+
       const isInput =
         document.activeElement?.tagName === 'INPUT' ||
         document.activeElement?.tagName === 'TEXTAREA' ||
@@ -1027,7 +1008,7 @@ export const StaffDirectoryPage: React.FC = () => {
       </div>
 
       {/* 2. Main Studio Content */}
-      <main className="px-4 lg:px-6 py-4 space-y-4">
+      <div className="workspace-view px-4 lg:px-6 py-4 space-y-4">
         {/* Studio Filter Controls Bar */}
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-slate-50 dark:bg-[#181818] p-3 rounded-[12px] border border-slate-200 dark:border-[#282828] shadow-xs">
           <div className="flex flex-wrap items-center gap-2 flex-1">
@@ -1041,6 +1022,25 @@ export const StaffDirectoryPage: React.FC = () => {
               onChange={(val) => setActiveTab(val as 'logins' | 'staff')}
               size="sm"
             />
+
+            {/* Status Filter: All / Active / Inactive */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#202020] p-0.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e]">
+              {(['all', 'active', 'inactive'] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={cn(
+                    'px-2.5 py-1 text-xs font-medium rounded-[4px] capitalize transition-colors cursor-pointer',
+                    statusFilter === st
+                      ? 'bg-white dark:bg-[#2a2a2a] text-slate-900 dark:text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 dark:text-[#888888] hover:text-slate-900 dark:hover:text-white'
+                  )}
+                >
+                  {st === 'all' ? 'All' : st === 'active' ? 'Active' : 'Inactive'}
+                </button>
+              ))}
+            </div>
 
             {/* Branch Filter for Staff */}
             {activeTab === 'staff' && (
@@ -2159,7 +2159,7 @@ export const StaffDirectoryPage: React.FC = () => {
             refresh();
           }}
         />
-      </main>
+      </div>
     </div>
   );
 };

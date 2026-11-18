@@ -118,6 +118,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   disabled = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [computedPlacement, setComputedPlacement] = useState<'top' | 'bottom'>('bottom');
+  const [computedAlign, setComputedAlign] = useState<'left' | 'right'>('left');
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Temporary selection state while interacting with the calendar
@@ -175,6 +177,24 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     if (startDate && isValid(parseISO(startDate))) {
       setViewMonth(parseISO(startDate));
     }
+
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      if (spaceBelow < 380 && spaceAbove > spaceBelow) {
+        setComputedPlacement('top');
+      } else {
+        setComputedPlacement('bottom');
+      }
+
+      if (align === 'right' || rect.left + 350 > window.innerWidth) {
+        setComputedAlign('right');
+      } else {
+        setComputedAlign('left');
+      }
+    }
+
     setIsOpen(!isOpen);
     triggerHaptic('light');
   };
@@ -431,8 +451,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       {isOpen && (
         <div
           className={cn(
-            'absolute top-full mt-1.5 z-50 w-[310px] sm:w-[320px] rounded-[12px] bg-white dark:bg-[#141414] border border-[#dfdfdf] dark:border-[#282828] shadow-2xl p-3 flex flex-col gap-3 animate-in fade-in zoom-in-95 duration-100 select-none',
-            align === 'right' ? 'right-0' : 'left-0'
+            'absolute z-50 w-[330px] sm:w-[350px] max-w-[calc(100vw-24px)] rounded-[12px] bg-white dark:bg-[#141414] border border-[#dfdfdf] dark:border-[#282828] shadow-2xl p-3 sm:p-3.5 flex flex-col gap-3 animate-in fade-in zoom-in-95 duration-100 select-none',
+            computedPlacement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
+            computedAlign === 'right' ? 'right-0 left-auto' : 'left-0 right-auto'
           )}
         >
           {/* Top Quick Presets Chips Bar */}
@@ -488,14 +509,23 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
           <div className="px-1">{renderCalendar()}</div>
 
           {/* Footer Toolbar: Summary & Single Emerald CTA */}
-          <div className="flex items-center justify-between pt-2.5 border-t border-[#ededed] dark:border-[#242424]">
-            <div className="text-[11px] font-mono tabular-nums text-[#707070] dark:text-[#a1a1a1] truncate max-w-[150px]">
+          <div className="flex items-center justify-between pt-2.5 border-t border-[#ededed] dark:border-[#242424] gap-2">
+            <div className="text-[11px] font-mono tabular-nums text-slate-700 dark:text-[#ededed] flex-1 min-w-0 pr-1">
               {tempStart && (
-                <span>
-                  {format(parseISO(tempStart), 'dd MMM')}
-                  {tempEnd && tempEnd !== tempStart && ` – ${format(parseISO(tempEnd), 'dd MMM')}`}
-                  {selectedDaysCount > 0 && ` (${selectedDaysCount}d)`}
-                </span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="font-semibold">{format(parseISO(tempStart), 'dd MMM')}</span>
+                  {tempEnd && tempEnd !== tempStart && (
+                    <>
+                      <span className="text-slate-400 dark:text-[#707070]">–</span>
+                      <span className="font-semibold">{format(parseISO(tempEnd), 'dd MMM')}</span>
+                    </>
+                  )}
+                  {selectedDaysCount > 0 && (
+                    <span className="text-[10px] font-sans px-1.5 py-0.2 rounded bg-slate-100 dark:bg-[#222222] text-slate-600 dark:text-[#a1a1a1] border border-slate-200/80 dark:border-[#2e2e2e]">
+                      {selectedDaysCount}d
+                    </span>
+                  )}
+                </div>
               )}
             </div>
 

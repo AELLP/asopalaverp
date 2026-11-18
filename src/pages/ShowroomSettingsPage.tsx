@@ -2,14 +2,20 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useUIStore } from '@/store/uiStore';
 import { useVouchers } from '@/hooks/useVouchers';
+import { useVoucherStore } from '@/store/voucherStore';
 import { useBranchStore } from '@/store/branchStore';
 import { erpService } from '@/lib/erpService';
 import {
   AccountingPeriod,
   CurrencyDenomination,
   AppRole,
-  RolePermissions,  StaffMember,
+  RolePermissions,
+  StaffMember,
   GstTaxRate,
+  ExpenseCategory,
+  Department,
+  CourierPartner,
+  Branch,
 } from '@/types/database';
 import { formatINR, formatDate, cn, triggerHaptic } from '@/lib/utils';
 import { MasterDataDrawer, MasterDrawerType } from '@/components/settings/MasterDataDrawer';
@@ -17,6 +23,7 @@ import { useNotificationStore } from '@/store/notificationStore';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { toast } from '@/components/ui/ToastContainer';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 
 import {
   Building2,
@@ -83,7 +90,7 @@ const SETTINGS_TABS: SettingsTabMeta[] = [
     group: 'SHOWROOM MASTER DATA',
     tableName: 'public.branches',
     icon: Building2,
-    description: 'Showroom branch locations, cash box limits, and GST details',
+    description: 'Showroom branch locations, cash limits, and GST details',
     drawerType: 'branch',
   },
   {
@@ -165,17 +172,7 @@ const SETTINGS_TABS: SettingsTabMeta[] = [
   },
 ];
 
-function downloadBlob(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: `${mimeType};charset=utf-8;` });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
+
 
 export const ShowroomSettingsPage: React.FC = () => {
   const { user } = useAuthStore();
@@ -250,7 +247,7 @@ export const ShowroomSettingsPage: React.FC = () => {
         erpService.getCurrencyDenominations(),
         erpService.getAppRoles(),
         erpService.getAllRolePermissions(),
-        erpService.getStaffMembers('ALL'),
+        erpService.getStaffMembers('ALL', true),
         erpService.getGstTaxRates(false),
       ]);
       setPeriods(p || []);
@@ -272,6 +269,17 @@ export const ShowroomSettingsPage: React.FC = () => {
     if (isAuthorizedAdmin) {
       loadData();
     }
+    const handleMasterUpdate = () => {
+      loadData();
+      useVoucherStore.getState().fetchMasterData(true);
+      useBranchStore.getState().fetchBranchesAndWallets(true);
+    };
+    window.addEventListener('asopalav:master-data-updated', handleMasterUpdate);
+    window.addEventListener('asopalav:hierarchy-updated', handleMasterUpdate);
+    return () => {
+      window.removeEventListener('asopalav:master-data-updated', handleMasterUpdate);
+      window.removeEventListener('asopalav:hierarchy-updated', handleMasterUpdate);
+    };
   }, [isAuthorizedAdmin, loadData]);
 
   // Sync broadcast state
@@ -506,6 +514,67 @@ SET rate_label = EXCLUDED.rate_label,
     }
   };
 
+  const handleToggleCategoryStatus = async (cat: ExpenseCategory) => {
+    const nextStatus = !cat.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    try {
+      await erpService.saveCategory({ ...cat, is_active: nextStatus }, true, userName, user?.role_code || 'Super_Admin');
+      refresh();
+      toast.success(`${cat.category_name} is now ${nextStatus ? 'Active' : 'Inactive'}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update category status.');
+    }
+  };
+
+  const handleToggleDepartmentStatus = async (dept: Department) => {
+    const nextStatus = !dept.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    try {
+      await erpService.saveDepartment({ ...dept, is_active: nextStatus }, true, userName, user?.role_code || 'Super_Admin');
+      refresh();
+      toast.success(`${dept.department_name} is now ${nextStatus ? 'Active' : 'Inactive'}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update department status.');
+    }
+  };
+
+  const handleToggleCourierStatus = async (cr: CourierPartner) => {
+    const nextStatus = !cr.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    try {
+      await erpService.saveCourier({ ...cr, is_active: nextStatus }, true, userName, user?.role_code || 'Super_Admin');
+      refresh();
+      toast.success(`${cr.partner_name} is now ${nextStatus ? 'Active' : 'Inactive'}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update courier status.');
+    }
+  };
+
+  const handleToggleBranchStatus = async (b: Branch) => {
+    const nextStatus = !b.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    try {
+      await erpService.saveBranch({ ...b, is_active: nextStatus }, true, userName, user?.role_code || 'Super_Admin');
+      fetchBranchesAndWallets(true);
+      toast.success(`${b.branch_name} is now ${nextStatus ? 'Active' : 'Inactive'}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update branch status.');
+    }
+  };
+
+  const handleToggleStaffStatus = async (s: StaffMember) => {
+    const nextStatus = !s.is_active;
+    const userName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : 'Store Manager';
+    try {
+      await erpService.toggleStaffActiveStatus(s.staff_code, nextStatus, `${s.first_name} ${s.last_name || ''}`, userName, user?.role_code || 'Super_Admin');
+      loadData();
+      refresh();
+      toast.success(`${s.first_name} ${s.last_name || ''} is now ${nextStatus ? 'Active' : 'Inactive'}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to update staff status.');
+    }
+  };
+
   const escapeCsvField = (value: string | number | boolean | null | undefined): string => {
     const str = String(value ?? '');
     // Escape spreadsheet formula injection characters
@@ -519,8 +588,7 @@ SET rate_label = EXCLUDED.rate_label,
     return str;
   };
 
-  // Export handlers
-      // Filtering data rows
+  // Filtering data rows
   const filteredPeriods = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return periods.filter((p) => {
@@ -1207,7 +1275,7 @@ SET rate_label = EXCLUDED.rate_label,
                                   <th className={densityClasses}>Branch Name</th>
                                   <th className={densityClasses}>City / State</th>
                                   <th className={densityClasses}>GST Number</th>
-                                  <th className={densityClasses}>Cash Box Limits</th>
+                                  <th className={densityClasses}>Cash Limits</th>
                                   <th className={densityClasses}>Status</th>
                                   <th className={cn(densityClasses, 'text-right')}>Action</th>
                                 </>
@@ -1216,7 +1284,7 @@ SET rate_label = EXCLUDED.rate_label,
                               {activeTabId === 'categories' && (
                                 <>
                                   <th className={densityClasses}>Category Name</th>
-                                  <th className={densityClasses}>Color Theme</th>
+                                  <th className={densityClasses}>Parent Group / Theme</th>
                                   <th className={densityClasses}>Status</th>
                                   <th className={cn(densityClasses, 'text-right')}>Action</th>
                                 </>
@@ -1226,6 +1294,7 @@ SET rate_label = EXCLUDED.rate_label,
                                 <>
                                   <th className={densityClasses}>Department Code</th>
                                   <th className={densityClasses}>Department Name</th>
+                                  <th className={densityClasses}>Parent Division</th>
                                   <th className={densityClasses}>Status</th>
                                   <th className={cn(densityClasses, 'text-right')}>Action</th>
                                 </>
@@ -1352,85 +1421,140 @@ SET rate_label = EXCLUDED.rate_label,
                                     </span>
                                   </td>
                                   <td className={cn(densityClasses, 'text-right')}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEdit(b)}
-                                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                                      title="Edit Branch"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleBranchStatus(b)}
+                                        className={cn(
+                                          'px-2 py-0.5 text-[10px] font-medium rounded-[4px] border transition-colors cursor-pointer',
+                                          b.is_active
+                                            ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                            : 'border-emerald-300 dark:border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                        )}
+                                      >
+                                        {b.is_active ? 'Disable' : 'Enable'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEdit(b)}
+                                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                                        title="Edit Branch"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
 
                             {/* CATEGORIES ROWS */}
                             {activeTabId === 'categories' &&
-                              filteredCategories.map((c) => (
-                                <tr key={c.category_name} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
-                                  <td className={cn(densityClasses, 'font-semibold text-slate-900 dark:text-white')}>
-                                    {c.category_name}
-                                  </td>
-                                  <td className={densityClasses}>
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-[#252525]">
-                                      {c.color_theme || 'Default'}
-                                    </span>
-                                  </td>
-                                  <td className={densityClasses}>
-                                    <span
-                                      className={cn(
-                                        'px-2 py-0.5 rounded-full text-[10px] font-mono',
-                                        c.is_active
-                                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e]'
-                                          : 'bg-slate-200 dark:bg-[#252525] text-slate-500'
-                                      )}
-                                    >
-                                      {c.is_active ? 'Active' : 'Inactive'}
-                                    </span>
-                                  </td>
-                                  <td className={cn(densityClasses, 'text-right')}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEdit(c)}
-                                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
+                              filteredCategories.map((c) => {
+                                const parent = c.parent_category || getParentCategory(c.category_name, c.color_theme);
+                                return (
+                                  <tr key={c.category_name} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
+                                    <td className={cn(densityClasses, 'font-semibold text-slate-900 dark:text-white')}>
+                                      {c.category_name}
+                                    </td>
+                                    <td className={densityClasses}>
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-[#252525] text-slate-700 dark:text-[#A1A1A1] border border-slate-200 dark:border-[#303030]">
+                                        {parent}
+                                      </span>
+                                    </td>
+                                    <td className={densityClasses}>
+                                      <span
+                                        className={cn(
+                                          'px-2 py-0.5 rounded-full text-[10px] font-mono',
+                                          c.is_active
+                                            ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e]'
+                                            : 'bg-slate-200 dark:bg-[#252525] text-slate-500'
+                                        )}
+                                      >
+                                        {c.is_active ? 'Active' : 'Inactive'}
+                                      </span>
+                                    </td>
+                                    <td className={cn(densityClasses, 'text-right')}>
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleCategoryStatus(c)}
+                                          className={cn(
+                                            'px-2 py-0.5 text-[10px] font-medium rounded-[4px] border transition-colors cursor-pointer',
+                                            c.is_active
+                                              ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                              : 'border-emerald-300 dark:border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                          )}
+                                        >
+                                          {c.is_active ? 'Disable' : 'Enable'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenEdit(c)}
+                                          className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                          title="Edit Category"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
 
                             {/* DEPARTMENTS ROWS */}
                             {activeTabId === 'departments' &&
-                              filteredDepartments.map((d) => (
-                                <tr key={d.department_code} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
-                                  <td className={cn(densityClasses, 'font-semibold text-slate-900 dark:text-white')}>
-                                    {d.department_code}
-                                  </td>
-                                  <td className={densityClasses}>{d.department_name}</td>
-                                  <td className={densityClasses}>
-                                    <span
-                                      className={cn(
-                                        'px-2 py-0.5 rounded-full text-[10px] font-mono',
-                                        d.is_active
-                                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e]'
-                                          : 'bg-slate-200 dark:bg-[#252525] text-slate-500'
-                                      )}
-                                    >
-                                      {d.is_active ? 'Active' : 'Inactive'}
-                                    </span>
-                                  </td>
-                                  <td className={cn(densityClasses, 'text-right')}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEdit(d)}
-                                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
+                              filteredDepartments.map((d) => {
+                                const parent = d.parent_division_name || getParentDepartment(d.department_code || d.department_name).name;
+                                return (
+                                  <tr key={d.department_code} className="hover:bg-slate-50 dark:hover:bg-[#202020] transition-colors">
+                                    <td className={cn(densityClasses, 'font-semibold text-slate-900 dark:text-white')}>
+                                      {d.department_code}
+                                    </td>
+                                    <td className={densityClasses}>{d.department_name}</td>
+                                    <td className={densityClasses}>
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-[#252525] text-slate-700 dark:text-[#A1A1A1] border border-slate-200 dark:border-[#303030]">
+                                        {parent}
+                                      </span>
+                                    </td>
+                                    <td className={densityClasses}>
+                                      <span
+                                        className={cn(
+                                          'px-2 py-0.5 rounded-full text-[10px] font-mono',
+                                          d.is_active
+                                            ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e]'
+                                            : 'bg-slate-200 dark:bg-[#252525] text-slate-500'
+                                        )}
+                                      >
+                                        {d.is_active ? 'Active' : 'Inactive'}
+                                      </span>
+                                    </td>
+                                    <td className={cn(densityClasses, 'text-right')}>
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleDepartmentStatus(d)}
+                                          className={cn(
+                                            'px-2 py-0.5 text-[10px] font-medium rounded-[4px] border transition-colors cursor-pointer',
+                                            d.is_active
+                                              ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                              : 'border-emerald-300 dark:border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                          )}
+                                        >
+                                          {d.is_active ? 'Disable' : 'Enable'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenEdit(d)}
+                                          className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                          title="Edit Department"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
 
                             {/* COURIERS ROWS */}
                             {activeTabId === 'couriers' &&
@@ -1454,13 +1578,28 @@ SET rate_label = EXCLUDED.rate_label,
                                     </span>
                                   </td>
                                   <td className={cn(densityClasses, 'text-right')}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEdit(cr)}
-                                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleCourierStatus(cr)}
+                                        className={cn(
+                                          'px-2 py-0.5 text-[10px] font-medium rounded-[4px] border transition-colors cursor-pointer',
+                                          cr.is_active
+                                            ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                            : 'border-emerald-300 dark:border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                        )}
+                                      >
+                                        {cr.is_active ? 'Disable' : 'Enable'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEdit(cr)}
+                                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                                        title="Edit Courier"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
@@ -1491,13 +1630,28 @@ SET rate_label = EXCLUDED.rate_label,
                                     </span>
                                   </td>
                                   <td className={cn(densityClasses, 'text-right')}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEdit(s)}
-                                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                                    >
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleStaffStatus(s)}
+                                        className={cn(
+                                          'px-2 py-0.5 text-[10px] font-medium rounded-[4px] border transition-colors cursor-pointer',
+                                          s.is_active
+                                            ? 'border-rose-200 dark:border-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'
+                                            : 'border-emerald-300 dark:border-[#3ecf8e]/40 text-emerald-700 dark:text-[#3ecf8e] hover:bg-emerald-50 dark:hover:bg-emerald-950/20'
+                                        )}
+                                      >
+                                        {s.is_active ? 'Disable' : 'Enable'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEdit(s)}
+                                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#333] text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                                        title="Edit Staff"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               ))}

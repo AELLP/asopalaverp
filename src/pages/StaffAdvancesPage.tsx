@@ -95,17 +95,7 @@ const getAdvanceAgeing = (advanceDate: string, status: string) => {
   return { days, category: 'overdue_15', label: `${days}d (Overdue)`, isOverdue: true };
 };
 
-function downloadBlob(filename: string, content: string, mimeType: string = 'text/csv;charset=utf-8;') {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+
 
 export const StaffAdvancesPage: React.FC = () => {
   const { setAdvanceModalOpen, setSettleTargetAdvance, setActivePage } = useUIStore();
@@ -293,56 +283,6 @@ export const StaffAdvancesPage: React.FC = () => {
     const amount = list.reduce((s, a) => s + (Number(a.advance_amount) || 0), 0);
     return { count, amount };
   }, [advances]);
-
-  // Export Monthly Payroll Salary Deductions CSV
-  const handleExportPayrollDeductions = () => {
-    triggerHaptic();
-    const currentMonth = format(new Date(), 'MMMM yyyy');
-    const headers = [
-      'Staff Member',
-      'Department',
-      'Staff Code',
-      'Voucher / Receipt No.',
-      'Disbursal Date',
-      'Advance Disbursed (INR)',
-      'Bills Submitted (INR)',
-      'Cash Returned (INR)',
-      'Remaining Balance Due (INR)',
-      'Payroll Deduction Month',
-      'Payment Mode',
-      'Status',
-      'Workflow Source',
-      'Purpose / Notes',
-    ];
-
-    const activeDeductions = advances.filter((a) => a.unsettled_balance > 0);
-    const exportList = activeDeductions.length > 0 ? activeDeductions : advances;
-
-    const rows = exportList.map((adv) => [
-      `"${adv.staff_name.replace(/"/g, '""')}"`,
-      `"${(adv.department_name || 'General Operations').replace(/"/g, '""')}"`,
-      `"${adv.staff_code}"`,
-      `"${adv.receipt_number}"`,
-      `"${adv.advance_date}"`,
-      adv.advance_amount,
-      adv.bills_submitted_amount || 0,
-      adv.cash_returned_amount || 0,
-      adv.unsettled_balance,
-      `"${adv.salary_deduction_month || currentMonth}"`,
-      `"${adv.payment_method === 'Online_UPI' ? 'UPI' : 'Cash'}"`,
-      `"${adv.status.replace(/_/g, ' ')}"`,
-      `"${adv.is_direct_voucher_advance ? 'Cashier F2 Advance Salary' : 'Dedicated Advance System'}"`,
-      `"${(adv.purpose || '').replace(/"/g, '""')}"`,
-    ]);
-
-    const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    downloadBlob(`Asopalav_Staff_Salary_Deductions_${format(new Date(), 'yyyy_MM')}.csv`, csv);
-    showToast({
-      type: 'success',
-      title: 'Payroll Deductions Exported',
-      message: `Exported ${rows.length} staff advance deduction lines for month-end payroll processing.`,
-    });
-  };
 
   const departmentsList = useMemo(() => {
     const set = new Set<string>();
@@ -742,17 +682,6 @@ export const StaffAdvancesPage: React.FC = () => {
               size="sm"
             />
 
-                        {/* Export Monthly Payroll Salary Deductions */}
-            <button
-              type="button"
-              onClick={handleExportPayrollDeductions}
-              className="h-8.5 px-3 py-1.5 rounded-[6px] border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-800 dark:text-[#3ecf8e] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-              title="Download itemized salary deductions sheet for Month-End Payroll"
-            >
-              <Download className="w-3.5 h-3.5 text-[#3ecf8e]" />
-              <span className="hidden md:inline">Payroll Deductions CSV</span>
-            </button>
-
             {/* Direct Link to Reports Hub (F5) Single Source of Truth */}
             <button
               type="button"
@@ -784,7 +713,7 @@ export const StaffAdvancesPage: React.FC = () => {
       </div>
 
       {/* Main Container Area */}
-      <main className="px-4 lg:px-6 py-4 space-y-4 flex-1">
+      <div className="workspace-view px-4 lg:px-6 py-4 space-y-4 flex-1">
                 {/* Smart Workflow Bridge Active Banner */}
         {bridgedStats.count > 0 && (
           <div className="p-3 rounded-[10px] bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-900 dark:text-[#3ecf8e] flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs">
@@ -1313,7 +1242,7 @@ export const StaffAdvancesPage: React.FC = () => {
                     )}
 
                     {visibleColumns.has('actions') && (
-                      <th className={cn('text-right min-w-[140px]', densityStyles.header)}>
+                      <th className={cn('text-right min-w-[140px] sticky right-0 z-10 bg-slate-50 dark:bg-[#18181b] border-l border-slate-200 dark:border-[#242424] shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.25)]', densityStyles.header)}>
                         <span className="font-sans font-medium text-slate-700 dark:text-zinc-300">Actions</span>
                       </th>
                     )}
@@ -1492,7 +1421,7 @@ export const StaffAdvancesPage: React.FC = () => {
 
                         {visibleColumns.has('actions') && (
                           <td
-                            className={cn('text-right whitespace-nowrap relative', densityStyles.cell)}
+                            className={cn('text-right whitespace-nowrap sticky right-0 z-10 bg-white dark:bg-[#141414] group-hover:bg-slate-50/80 dark:group-hover:bg-[#1a1a1a] border-l border-slate-100 dark:border-[#242424] shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.05)] dark:shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.25)]', densityStyles.cell)}
                             data-dropdown-id={adv.id}
                           >
                             <div className="flex items-center justify-end gap-1.5">
@@ -2024,7 +1953,7 @@ export const StaffAdvancesPage: React.FC = () => {
             </div>
           </div>
         )}
-      </main>
+      </div>
     </div>
   );
 };

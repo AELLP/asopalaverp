@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useLayoutEffect, Suspense, lazy } from 'react';
 import { useAuthStore, isPrivilegedAdminRole } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
-import { useUIStore, PageId } from '@/store/uiStore';
+import { useUIStore, PageId, normalizePageId } from '@/store/uiStore';
 import { useBrandStore } from '@/store/brandStore';
 import { useNotificationStore } from '@/store/notificationStore';
 import { RolePermissions } from '@/types/database';
@@ -10,7 +10,6 @@ import { useHotkeys } from '@/hooks/useHotkeys';
 // Layout Components (Synchronous for instantaneous shell rendering)
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
-import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { PageTransition } from '@/components/layout/PageTransition';
 import { PinLockOverlay } from '@/components/layout/PinLockOverlay';
 import { AnnouncementBanner } from '@/components/layout/AnnouncementBanner';
@@ -335,14 +334,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
-      const pageParam = params.get('page');
-      if (!pageParam) {
-        useUIStore.getState().setActivePage('dashboard', false);
-      } else if (VALID_PAGES.includes(pageParam as PageId)) {
-        useUIStore.getState().setActivePage(pageParam as PageId, false);
-      } else {
-        useUIStore.getState().setActivePage('404', false);
-      }
+      const targetPage = normalizePageId(params.get('page'));
+      useUIStore.getState().setActivePage(targetPage, false);
 
       const branchParam = params.get('branch');
       if (branchParam) {
@@ -498,10 +491,10 @@ export const App: React.FC = () => {
             <Topbar />
           </header>
 
-          {/* Workspace Canvas Area with Suspense Fallback */}
+          {/* Workspace Canvas Area with Suspense Fallback (pb-6 on mobile provides clean bottom breathing room) */}
           <main
             ref={mainRef}
-            className="workspace-canvas flex-1 overflow-y-auto bg-white dark:bg-[#141414] focus:outline-none transition-all duration-200 ease-out flex flex-col p-0 pb-20 lg:pb-0"
+            className="workspace-canvas flex-1 overflow-y-auto bg-white dark:bg-[#141414] focus:outline-none transition-all duration-200 ease-out flex flex-col p-0 pb-6 lg:pb-0 min-w-0"
           >
             {!isLocked && (
               <PageTransition pageKey={activePage}>
@@ -525,9 +518,6 @@ export const App: React.FC = () => {
           </main>
         </div>
       </div>
-
-      {/* 3. Native Mobile Bottom Tab Navigation */}
-      <MobileBottomNav />
 
       {/* 4. Global Overlay Components & Drawers (Lazy Loaded) */}
       <Suspense fallback={null}>

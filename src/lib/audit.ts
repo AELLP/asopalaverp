@@ -82,12 +82,9 @@ export async function getClientIpAddress(): Promise<string> {
 
   ipResolutionPromise = (async () => {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
       const res = await fetch('https://api.ipify.org?format=json', {
-        signal: controller.signal,
+        signal: AbortSignal.timeout(2000),
       });
-      clearTimeout(timeoutId);
       if (res.ok) {
         const data = await res.json();
         if (data?.ip) {

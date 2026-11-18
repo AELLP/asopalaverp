@@ -17,6 +17,7 @@ import {
   Trash2,
   Building2,
   Wallet,
+  IndianRupee,
   Check,
   Smartphone,
   Truck,
@@ -599,7 +600,7 @@ export const VoucherDetailDrawer: React.FC = () => {
           <div><strong>Branch:</strong> ${v.branch_code || 'ASI'}</div>
           <div><strong>Category:</strong> ${v.category_name || 'General Expense'}</div>
           <div><strong>Department:</strong> ${v.department_name || 'Showroom'}</div>
-          <div><strong>Payment Mode:</strong> ${v.payment_method === 'Physical_Cash' ? 'Cash Box' : 'Online UPI'}</div>
+          <div><strong>Payment Mode:</strong> ${v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'}</div>
           <div><strong>Bill/Ref #:</strong> ${v.bill_number || 'Cash Memo'}</div>
           <div style="grid-column: span 2;"><strong>Paid To / Payee:</strong> ${v.recipient_name || 'Counter Expense'}</div>
         </div>
@@ -737,7 +738,7 @@ export const VoucherDetailDrawer: React.FC = () => {
       isOpen={Boolean(activeDrawerVoucher)}
       onClose={closeDrawer}
       title={isEditing ? `Edit Bill #${formatVoucherNumber(v.voucher_number)}` : `Expense Bill #${formatVoucherNumber(v.voucher_number)}`}
-      subtitle={`Recorded ${formatDate(v.payment_date)} • ${v.branch_code} • ${v.payment_method === 'Physical_Cash' ? 'Cash Box' : 'Online UPI'}`}
+      subtitle={`Recorded ${formatDate(v.payment_date)} • ${v.branch_code} • ${v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'}`}
       badge={statusBadge}
       size="full"
       footer={drawerFooter}
@@ -1023,8 +1024,8 @@ export const VoucherDetailDrawer: React.FC = () => {
                         : 'border-slate-200 dark:border-[#282828] bg-white dark:bg-[#181818] text-slate-700 dark:text-zinc-300'
                     )}
                   >
-                    <Wallet className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Cash Box</span>
+                    <IndianRupee className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] stroke-[2.2]" />
+                    <span>Cash</span>
                   </button>
 
                   <button
@@ -1038,7 +1039,7 @@ export const VoucherDetailDrawer: React.FC = () => {
                     )}
                   >
                     <Smartphone className="w-3.5 h-3.5 text-blue-500" />
-                    <span>Online UPI</span>
+                    <span>UPI</span>
                   </button>
                 </div>
               </div>
@@ -1362,14 +1363,14 @@ export const VoucherDetailDrawer: React.FC = () => {
                 <div className="flex items-center gap-2 text-rose-900 dark:text-rose-200 font-semibold">
                   <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                   <span>
-                    Confirm {activeAction === 'void' ? 'Voucher Void' : 'Permanent Deletion (Super Admin)'}
+                    Confirm {activeAction === 'void' ? 'Bill Cancellation' : 'Permanent Deletion (Super Admin)'}
                   </span>
                 </div>
                 <p className="text-[11px] text-rose-700 dark:text-rose-300 font-medium leading-relaxed">
                   {activeAction === 'void'
                     ? (isTodayVoucher
-                        ? `This voucher was created today. Voiding it will immediately refund ₹${v.total_amount} back into today's ${v.payment_method.replace('_', ' ')} drawer balance.`
-                        : `Past-day bill (${voucherDate}): Voiding will cancel this voucher in accounting records. Today's drawer cash balance will NOT be altered (preventing phantom cash drift).`)
+                        ? `This bill was recorded today. Cancelling it will immediately refund ₹${v.total_amount} back into today's ${v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'} drawer balance.`
+                        : `Past-day bill (${voucherDate}): Cancelling will mark this bill as cancelled in records. Today's drawer cash balance will NOT be altered (preventing cash count drift).`)
                     : 'Permanent deletion is restricted to Super Admin and removes this voucher permanently.'}
                 </p>
 
@@ -1382,7 +1383,7 @@ export const VoucherDetailDrawer: React.FC = () => {
                       onChange={(e) => setCashReturnedToDrawer(e.target.checked)}
                       className="rounded border-slate-300 dark:border-[#333] text-[#3ecf8e] focus:ring-[#3ecf8e]"
                     />
-                    <span>Physical cash was collected back and added to today's drawer float</span>
+                    <span>Cash was collected back and added to today's drawer float</span>
                   </label>
                 )}
 
@@ -1390,7 +1391,7 @@ export const VoucherDetailDrawer: React.FC = () => {
                   rows={2}
                   value={actionReason}
                   onChange={(e) => setActionReason(e.target.value)}
-                  placeholder={`Mandatory reason for ${activeAction === 'void' ? 'voiding' : 'deleting'} voucher...`}
+                  placeholder={`Mandatory reason for ${activeAction === 'void' ? 'cancelling' : 'deleting'} bill...`}
                   className="w-full bg-white dark:bg-[#141414] border border-rose-300 dark:border-rose-500/40 rounded-[6px] p-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-rose-500"
                 />
                 <div className="flex justify-end gap-2 pt-1">
@@ -1407,7 +1408,7 @@ export const VoucherDetailDrawer: React.FC = () => {
                     onClick={activeAction === 'void' ? handleVoidVoucher : handleDeleteVoucher}
                     className="px-3.5 py-1 rounded-[4px] bg-rose-600 hover:bg-rose-700 text-white font-medium cursor-pointer"
                   >
-                    {loadingAction ? 'Processing...' : `Confirm ${activeAction === 'void' ? 'Void' : 'Delete'}`}
+                    {loadingAction ? 'Processing...' : activeAction === 'void' ? 'Confirm Cancellation' : 'Confirm Delete'}
                   </button>
                 </div>
               </div>

@@ -152,9 +152,9 @@ export const useBranchStore = create<BranchState>((set, get) => ({
 
     branchFetchInFlight = (async () => {
       try {
-        // 1. Fetch real branches and wallets in parallel
+        // 1. Fetch real branches and wallets in parallel (include inactive for settings management)
         const [bRes, wRes] = await Promise.all([
-          supabase.from('branches').select('*').eq('is_active', true).order('branch_name'),
+          supabase.from('branches').select('*').order('branch_name'),
           supabase.from('branch_wallets').select('*'),
         ]);
 

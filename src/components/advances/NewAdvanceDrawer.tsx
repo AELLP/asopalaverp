@@ -10,6 +10,8 @@ import {
   X,
   HandCoins,
   Check,
+  IndianRupee,
+  CreditCard,
   AlertCircle,
   AlertTriangle,
 } from 'lucide-react';
@@ -335,12 +337,14 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
               triggerHaptic('selection');
               setStaffCode(val);
             }}
-            options={staff.map((s) => ({
-              value: s.staff_code,
-              label: `${s.first_name} ${s.last_name}`,
-              sublabel: `${s.department_name || 'Floor'} · ${s.designation || 'Staff'} (${s.branch_code || 'ASI'})`,
-              badge: s.staff_code,
-            }))}
+            options={staff
+              .filter((s) => s.is_active !== false)
+              .map((s) => ({
+                value: s.staff_code,
+                label: `${s.first_name} ${s.last_name}`,
+                sublabel: `${s.department_name || 'Floor'} · ${s.designation || 'Staff'} (${s.branch_code || 'ASI'})`,
+                badge: s.staff_code,
+              }))}
             placeholder="Search staff by name or code..."
           />
 
@@ -479,8 +483,9 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
               )}
             >
               <div className="flex justify-between items-center w-full">
-                <span className="text-[10px] uppercase font-mono tracking-wider font-medium text-slate-500 dark:text-zinc-400">
-                  Cash Drawer
+                <span className="text-[10px] uppercase font-mono tracking-wider font-medium text-slate-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <IndianRupee className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] stroke-[2.2]" />
+                  <span>Cash</span>
                 </span>
                 {paymentMethod === 'Physical_Cash' && (
                   <span className="w-4 h-4 rounded-full bg-[#3ecf8e] flex items-center justify-center text-[#171717]">
@@ -489,7 +494,7 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
                 )}
               </div>
               <strong className="text-sm block mt-1 font-medium text-slate-900 dark:text-white">
-                Physical Cash in Till
+                Cash in Drawer
               </strong>
               <span className="text-xs text-emerald-700 dark:text-[#3ecf8e] font-mono font-medium tabular-nums mt-0.5">
                 {formatINR(cashBalance)} Available
@@ -511,8 +516,9 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
               )}
             >
               <div className="flex justify-between items-center w-full">
-                <span className="text-[10px] uppercase font-mono tracking-wider font-medium text-slate-500 dark:text-zinc-400">
-                  Online UPI
+                <span className="text-[10px] uppercase font-mono tracking-wider font-medium text-slate-500 dark:text-zinc-400 flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-sky-500" />
+                  <span>UPI</span>
                 </span>
                 {paymentMethod === 'Online_UPI' && (
                   <span className="w-4 h-4 rounded-full bg-[#3ecf8e] flex items-center justify-center text-[#171717]">
@@ -521,7 +527,7 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
                 )}
               </div>
               <strong className="text-sm block mt-1 font-medium text-slate-900 dark:text-white">
-                Online QR / UPI Transfer
+                UPI Transfer / QR
               </strong>
               <span className="text-xs text-sky-700 dark:text-sky-400 font-mono font-medium tabular-nums mt-0.5">
                 {formatINR(upiBalance)} Available
@@ -612,7 +618,7 @@ export const NewAdvanceDrawer: React.FC<NewAdvanceDrawerProps> = ({ onSuccess })
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Payment Mode</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{paymentMethod === 'Physical_Cash' ? 'Cash Till' : 'Online UPI'}</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{paymentMethod === 'Physical_Cash' ? 'Cash' : 'UPI'}</span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Date</span>

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ChevronDown,
   Coins,
+  IndianRupee,
   Smartphone,
   CheckCircle2,
   Check,
@@ -85,8 +86,8 @@ export const DailyCashDrawerStatement: React.FC<DailyCashDrawerStatementProps> =
 
   // Day-by-Day Cash Calculation
   const dailySummary: PeriodCashSummary = useMemo(() => {
-    return calculateDailyCashBalances(ledgerEntries, currentCash);
-  }, [ledgerEntries, currentCash]);
+    return calculateDailyCashBalances(ledgerEntries, currentCash, undefined, undefined, propVouchers);
+  }, [ledgerEntries, currentCash, propVouchers]);
 
   return (
     <div
@@ -139,8 +140,8 @@ export const DailyCashDrawerStatement: React.FC<DailyCashDrawerStatementProps> =
             <div className="p-3 rounded-[8px] bg-slate-50 dark:bg-[#1f1f23] border border-slate-200/80 dark:border-[#2a2a30] flex items-center justify-between">
               <div className="space-y-0.5">
                 <span className="text-[11px] text-slate-500 dark:text-[#8E8E93] font-medium flex items-center gap-1.5">
-                  <Coins className="w-3.5 h-3.5 text-amber-500" />
-                  Physical Cash Drawer
+                  <IndianRupee className="w-3.5 h-3.5 text-amber-500 stroke-[2.2]" />
+                  Cash Drawer
                 </span>
                 <p className="text-sm font-semibold font-mono text-slate-900 dark:text-white tabular-nums">
                   {formatINR(currentCash)}
@@ -155,7 +156,7 @@ export const DailyCashDrawerStatement: React.FC<DailyCashDrawerStatementProps> =
               <div className="space-y-0.5">
                 <span className="text-[11px] text-slate-500 dark:text-[#8E8E93] font-medium flex items-center gap-1.5">
                   <Smartphone className="w-3.5 h-3.5 text-blue-500" />
-                  Online UPI Float
+                  UPI Account
                 </span>
                 <p className="text-sm font-semibold font-mono text-slate-900 dark:text-white tabular-nums">
                   {formatINR(currentUpi)}

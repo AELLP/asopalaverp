@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ExpenseCategory, Department, VendorSplitItem } from '@/types/database';
 import { Plus, Trash2, Store, Calculator } from 'lucide-react';
 import { formatINR } from '@/lib/utils';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 
 interface VendorSplitTableProps {
   splits: VendorSplitItem[];
@@ -19,6 +20,27 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
   targetAmount,
   onChange,
 }) => {
+  const categoryOptions = useMemo(() => {
+    return [...categories]
+      .map((c) => ({
+        value: c.category_name,
+        label: c.category_name,
+        group: c.parent_category || getParentCategory(c.category_name, c.color_theme) || 'General Expenses',
+      }))
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+  }, [categories]);
+
+  const departmentOptions = useMemo(() => {
+    return [...departments]
+      .map((d) => ({
+        value: d.department_name,
+        label: d.department_name,
+        badge: d.department_code,
+        group: d.parent_division_name || getParentDepartment(d.department_code || d.department_name).name || 'Store Operations & Front Desk',
+      }))
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+  }, [departments]);
+
   const handleAddRow = () => {
     const newRow: VendorSplitItem = {
       vendor_name: '',
@@ -141,10 +163,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                   <SearchableSelect
                     value={row.category_name}
                     onChange={(val) => handleUpdateRow(idx, 'category_name', val)}
-                    options={categories.map((c) => ({
-                      value: c.category_name,
-                      label: c.category_name,
-                    }))}
+                    options={categoryOptions}
                     placeholder="Category..."
                     allowCustom={false}
                   />
@@ -155,10 +174,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                   <SearchableSelect
                     value={row.department_name}
                     onChange={(val) => handleUpdateRow(idx, 'department_name', val)}
-                    options={departments.map((d) => ({
-                      value: d.department_name,
-                      label: d.department_name,
-                    }))}
+                    options={departmentOptions}
                     placeholder="Dept..."
                     allowCustom={false}
                   />
@@ -254,10 +270,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                     <SearchableSelect
                       value={row.category_name}
                       onChange={(val) => handleUpdateRow(idx, 'category_name', val)}
-                      options={categories.map((c) => ({
-                        value: c.category_name,
-                        label: c.category_name,
-                      }))}
+                      options={categoryOptions}
                       placeholder="Category..."
                       allowCustom={false}
                     />
@@ -270,10 +283,7 @@ export const VendorSplitTable: React.FC<VendorSplitTableProps> = ({
                     <SearchableSelect
                       value={row.department_name}
                       onChange={(val) => handleUpdateRow(idx, 'department_name', val)}
-                      options={departments.map((d) => ({
-                        value: d.department_name,
-                        label: d.department_name,
-                      }))}
+                      options={departmentOptions}
                       placeholder="Dept..."
                       allowCustom={false}
                     />

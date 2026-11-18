@@ -20,6 +20,7 @@ import {
   Clock,
   Building2,
   Coins,
+  IndianRupee,
   Edit3,
   Loader2,
   AlertCircle,
@@ -221,7 +222,7 @@ export const TreasuryPassbookTable: React.FC<TreasuryPassbookTableProps> = ({
   }, [dateFilter, customStartDate, customEndDate, selectedDayFilter]);
 
   const entriesWithRunningBalance = useMemo(() => {
-    const chronological = [...entries].sort(
+    const chronological = entries.toSorted(
       (a, b) => new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime()
     );
 
@@ -298,7 +299,7 @@ export const TreasuryPassbookTable: React.FC<TreasuryPassbookTableProps> = ({
       });
     }
 
-    const sorted = [...list].sort((a, b) => {
+    const sorted = list.toSorted((a, b) => {
       if (sortBy === 'oldest') {
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       }
@@ -417,7 +418,7 @@ export const TreasuryPassbookTable: React.FC<TreasuryPassbookTableProps> = ({
                   : 'text-slate-500 dark:text-[#8E8E93] hover:text-slate-900 dark:hover:text-white'
               )}
             >
-              <Coins className="w-3 h-3 text-emerald-500" />
+              <IndianRupee className="w-3 h-3 text-emerald-500 stroke-[2.2]" />
               <span>Cash Drawer</span>
             </button>
 
@@ -436,7 +437,7 @@ export const TreasuryPassbookTable: React.FC<TreasuryPassbookTableProps> = ({
               )}
             >
               <Building2 className="w-3 h-3 text-blue-500" />
-              <span>Online UPI</span>
+              <span>UPI</span>
             </button>
           </div>
         </div>
@@ -670,8 +671,8 @@ export const TreasuryPassbookTable: React.FC<TreasuryPassbookTableProps> = ({
                               : 'bg-emerald-50 dark:bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] border-emerald-200 dark:border-[#3ecf8e]/20'
                           )}
                         >
-                          {isUpi ? <Building2 className="w-3 h-3" /> : <Coins className="w-3 h-3" />}
-                          <span>{entry.wallet_type === 'UPI' ? 'Online UPI' : 'Cash Drawer'}</span>
+                          {isUpi ? <Building2 className="w-3 h-3" /> : <IndianRupee className="w-3 h-3 stroke-[2.2]" />}
+                          <span>{entry.wallet_type === 'UPI' ? 'UPI' : 'Cash'}</span>
                         </span>
                       </td>
 

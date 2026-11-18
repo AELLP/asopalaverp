@@ -123,6 +123,18 @@ class ERPService {
   // 1. ACCOUNTING PERIODS & LOCKING
   // --------------------------------------------------------------------------
   async getAccountingPeriods(): Promise<AccountingPeriod[]> {
+    const currentMonthKey = format(new Date(), 'yyyy-MM');
+    const [curYear, curMonth] = currentMonthKey.split('-').map(Number);
+    const lastDayOfCurMonth = new Date(curYear, curMonth, 0).getDate();
+    const curMonthPeriod: AccountingPeriod = {
+      period_key: currentMonthKey,
+      start_date: `${currentMonthKey}-01`,
+      end_date: `${currentMonthKey}-${String(lastDayOfCurMonth).padStart(2, '0')}`,
+      is_locked: false,
+    };
+
+    let periods: AccountingPeriod[] = [];
+
     try {
       const { data, error } = await supabase
         .from('accounting_periods')
@@ -130,55 +142,80 @@ class ERPService {
         .order('period_key', { ascending: false });
 
       if (!error && data && data.length > 0) {
-        localStorage.setItem('asopalav_accounting_periods', JSON.stringify(data));
-        return data;
+        periods = data;
       }
     } catch (e) {
       console.warn('Using local accounting periods fallback', e);
     }
 
-    const local = localStorage.getItem('asopalav_accounting_periods');
-    if (local) {
-      try {
-        const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {
-        // ignore
+    if (periods.length === 0) {
+      const local = localStorage.getItem('asopalav_accounting_periods');
+      if (local) {
+        try {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed) && parsed.length > 0) periods = parsed;
+        } catch {
+          // ignore
+        }
       }
     }
 
-    const defaultPeriods: AccountingPeriod[] = [
-      {
-        period_key: '2026-10',
-        start_date: '2026-10-01',
-        end_date: '2026-10-31',
-        is_locked: false,
-      },
-      {
-        period_key: '2026-09',
-        start_date: '2026-09-01',
-        end_date: '2026-09-30',
-        is_locked: false,
-      },
-      {
-        period_key: '2026-08',
-        start_date: '2026-08-01',
-        end_date: '2026-08-31',
-        is_locked: true,
-        locked_at: '2026-08-31T23:59:59Z',
-        locked_by_name: 'Hemendra Bhai',
-        lock_reason: 'Monthly Accounts Finalized & Audited',
-      },
-    ];
-
-    try {
-      await supabase.from('accounting_periods').upsert(defaultPeriods, { onConflict: 'period_key' });
-    } catch {
-      // offline/fallback
+    if (periods.length === 0) {
+      periods = [
+        curMonthPeriod,
+        {
+          period_key: '2026-10',
+          start_date: '2026-10-01',
+          end_date: '2026-10-31',
+          is_locked: true,
+          locked_at: '2026-10-31T23:59:59Z',
+          locked_by_name: 'System Auto-Lock',
+          lock_reason: 'Automated Month-End Close (Monthly Rollover)',
+        },
+        {
+          period_key: '2026-09',
+          start_date: '2026-09-01',
+          end_date: '2026-09-30',
+          is_locked: true,
+          locked_at: '2026-09-30T23:59:59Z',
+          locked_by_name: 'Asopalav Admin',
+          lock_reason: 'Monthly Accounts Finalized & Audited',
+        },
+        {
+          period_key: '2026-08',
+          start_date: '2026-08-01',
+          end_date: '2026-08-31',
+          is_locked: true,
+          locked_at: '2026-08-31T23:59:59Z',
+          locked_by_name: 'Hemendra Bhai',
+          lock_reason: 'Monthly Accounts Finalized & Audited',
+        },
+      ];
     }
 
-    localStorage.setItem('asopalav_accounting_periods', JSON.stringify(defaultPeriods));
-    return defaultPeriods;
+    // Ensure the active current month is present
+    if (!periods.some((p) => p.period_key === currentMonthKey)) {
+      periods.unshift(curMonthPeriod);
+    }
+
+    // Automated accounting period lock rule:
+    // Any completed past month (period_key < currentMonthKey) is automatically locked
+    // unless explicitly unlocked with an admin override
+    const reconciledPeriods = periods.map((p) => {
+      if (p.period_key < currentMonthKey && !p.is_locked && !p.locked_by_name) {
+        return {
+          ...p,
+          is_locked: true,
+          locked_at: p.locked_at || `${p.end_date}T23:59:59Z`,
+          locked_by_name: 'System Auto-Lock',
+          lock_reason: 'Automated Month-End Close (Monthly Rollover)',
+        };
+      }
+      return p;
+    });
+
+    localStorage.setItem('asopalav_accounting_periods', JSON.stringify(reconciledPeriods));
+    return reconciledPeriods;
   }
 
   async togglePeriodLock(
@@ -244,22 +281,49 @@ class ERPService {
     if (useOverrideStore.getState().isLockedPeriodEntryAllowed()) {
       return false;
     }
-    const periodKey = dateString.slice(0, 7); // e.g. '2026-09'
+    const periodKey = dateString.slice(0, 7); // e.g. '2026-10'
+    const currentMonthKey = format(new Date(), 'yyyy-MM');
     const periods = await this.getAccountingPeriods();
     const match = periods.find((p) => p.period_key === periodKey);
-    return match ? match.is_locked : false;
+    if (match) {
+      return match.is_locked;
+    }
+    // If date is in a past completed month not explicitly found open, it is auto-locked
+    if (periodKey < currentMonthKey) {
+      return true;
+    }
+    return false;
   }
 
-  async getSecurityAuditLogs(limit: number = 500): Promise<SecurityAuditLog[]> {
+  async getSecurityAuditLogs(limit: number = 10000): Promise<SecurityAuditLog[]> {
     try {
-      const { data, error } = await supabase
-        .from('security_audit_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
+      let logs: SecurityAuditLog[] = [];
+      let from = 0;
+      const PAGE_SIZE = 1000;
+      let hasMore = true;
 
-      if (!error && Array.isArray(data) && data.length > 0) {
-        return data as SecurityAuditLog[];
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('security_audit_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error || !data || data.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        logs.push(...(data as SecurityAuditLog[]));
+        if (data.length < PAGE_SIZE || logs.length >= limit) {
+          hasMore = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      }
+
+      if (logs.length > 0) {
+        return logs;
       }
       return getLocalAuditLogs();
     } catch {
@@ -459,20 +523,42 @@ class ERPService {
 
     ledgerInFlight[canonicalId] = (async () => {
       try {
-        let query = supabase
-          .from('wallet_ledger')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(500);
+        let allLedgerData: any[] = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        let hasMore = true;
 
-        if (!isAll) {
-          query = query.or(`branch_id.eq.${canonicalId},branch_id.eq.${code},branch_code.eq.${code}`);
+        // Paginate across PostgREST 1,000-row limit to retrieve 100% of historical ledger entries
+        while (hasMore) {
+          let query = supabase
+            .from('wallet_ledger')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(from, from + PAGE_SIZE - 1);
+
+          if (!isAll) {
+            query = query.or(`branch_id.eq.${canonicalId},branch_id.eq.${code},branch_code.eq.${code}`);
+          }
+
+          const { data, error } = await query;
+          if (error || !data || data.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          allLedgerData.push(...data);
+          if (data.length < PAGE_SIZE) {
+            hasMore = false;
+          } else {
+            from += PAGE_SIZE;
+          }
         }
 
-        const { data, error } = await query;
-        if (!error && data !== null) {
-          const clean = sanitizeAndDeduplicateLedger(data);
-          localStorage.setItem(`asopalav_ledger_${canonicalId}`, JSON.stringify(clean.slice(0, 200)));
+        if (allLedgerData.length > 0) {
+          const clean = sanitizeAndDeduplicateLedger(allLedgerData);
+          try {
+            localStorage.setItem(`asopalav_ledger_${canonicalId}`, JSON.stringify(clean.slice(0, 2000)));
+          } catch {}
           ledgerMemoryCache[canonicalId] = { entries: clean, timestamp: Date.now() };
           return clean;
         }
@@ -1176,7 +1262,7 @@ class ERPService {
         `"${sanitize(formatDisplayDate(v.payment_date))}"`,
         `"${sanitize(v.branch_code || 'ASI')}"`,
         `"${sanitize(v.branch_id || 'Aellp-ASI')}"`,
-        `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI')}"`,
+        `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI')}"`,
         `"${sanitize(v.payment_type || 'Direct')}"`,
         Number(v.total_amount) || 0,
         `"${sanitize(v.recipient_name)}"`,
@@ -1262,7 +1348,7 @@ class ERPService {
             idx + 1,
             `"${sanitize(formatDisplayDate(v.payment_date))}"`,
             `"${sanitize(v.branch_code || 'ASI')}"`,
-            `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI')}"`,
+            `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI')}"`,
             `"${sanitize(s.staffName)}"`,
             `"${sanitize(s.staffCode)}"`,
             `"${sanitize(s.departmentName)}"`,
@@ -1283,7 +1369,7 @@ class ERPService {
           1,
           `"${sanitize(formatDisplayDate(v.payment_date))}"`,
           `"${sanitize(v.branch_code || 'ASI')}"`,
-          `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI')}"`,
+          `"${sanitize(v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI')}"`,
           `"${sanitize(v.recipient_name)}"`,
           `"${sanitize(v.requested_by_staff_code || '')}"`,
           `"${sanitize(v.department_name || '')}"`,
@@ -1385,7 +1471,7 @@ class ERPService {
       const formattedDate = formatTallyDate(v.payment_date);
       const creditLedger = mapPaymentToCreditLedger(v.payment_method, v.branch_code);
       const costCentre = `Showroom ${v.branch_code || 'ASI'}`;
-      const paymentModeStr = v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI';
+      const paymentModeStr = v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI';
       const splits = this.extractAllSplitsFromVoucher(v, splitsMap);
 
       if (splits.length > 0) {
@@ -4813,7 +4899,7 @@ class ERPService {
   async saveCategory(category: any, isEdit: boolean, userName: string, userRole: string) {
     const payload = {
       category_name: (category.category_name || '').trim(),
-      color_theme: category.color_theme || 'Vanilla',
+      color_theme: category.color_theme || category.parent_category || '-',
       is_active: category.is_active ?? true,
     };
     if (!payload.category_name) throw new Error('Category Name is required.');
@@ -4833,7 +4919,14 @@ class ERPService {
 
     useVoucherStore.getState().invalidateMasterData();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('asopalav:master-data-updated', { detail: { table: 'expense_categories' } }));
+      window.dispatchEvent(
+        new CustomEvent('asopalav:hierarchy-updated', {
+          detail: { categoryName: payload.category_name, parentCategory: payload.color_theme },
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent('asopalav:master-data-updated', { detail: { table: 'expense_categories' } })
+      );
     }
   }
 
@@ -4993,15 +5086,27 @@ class ERPService {
 
         if (!data || data.length === 0) {
           const insertData = { ...dataPayload };
-          if (!insertData.password_hash) insertData.password_hash = bcrypt.hashSync('Admin@123', 10);
-          if (!insertData.lock_pin_hash) insertData.lock_pin_hash = bcrypt.hashSync('1234', 10);
+          if (!insertData.password_hash) {
+            const unguessableSecret = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
+            insertData.password_hash = bcrypt.hashSync(unguessableSecret, 10);
+          }
+          if (!insertData.lock_pin_hash) {
+            const unguessablePin = Math.floor(100000 + Math.random() * 900000).toString();
+            insertData.lock_pin_hash = bcrypt.hashSync(unguessablePin, 10);
+          }
           const { error: insertErr } = await supabase.from('app_users').insert([insertData]);
           if (insertErr) throw insertErr;
         }
       } else {
         const insertData = { ...dataPayload };
-        if (!insertData.password_hash) insertData.password_hash = bcrypt.hashSync('Admin@123', 10);
-        if (!insertData.lock_pin_hash) insertData.lock_pin_hash = bcrypt.hashSync('1234', 10);
+        if (!insertData.password_hash) {
+          const unguessableSecret = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
+          insertData.password_hash = bcrypt.hashSync(unguessableSecret, 10);
+        }
+        if (!insertData.lock_pin_hash) {
+          const unguessablePin = Math.floor(100000 + Math.random() * 900000).toString();
+          insertData.lock_pin_hash = bcrypt.hashSync(unguessablePin, 10);
+        }
         const { error: insertErr } = await supabase.from('app_users').insert([insertData]);
         if (insertErr) {
           if (insertErr.code === '23505') {
@@ -5367,13 +5472,16 @@ class ERPService {
     }
   }
 
-  async getStaffMembers(branchId?: string): Promise<StaffMember[]> {
+  async getStaffMembers(branchId?: string, includeInactive: boolean = false): Promise<StaffMember[]> {
     try {
       let query = supabase
         .from('staff_members')
         .select('*')
-        .eq('is_active', true)
         .order('first_name', { ascending: true });
+
+      if (!includeInactive) {
+        query = query.eq('is_active', true);
+      }
 
       if (branchId && branchId !== 'ALL') {
         query = query.eq('branch_id', branchId);
@@ -5697,21 +5805,10 @@ class ERPService {
         locked_at: lockData.locked_at || new Date().toISOString(),
       };
 
-      const { data, error } = await supabase
-        .from('eod_till_locks')
-        .upsert([payload], { onConflict: 'branch_id,lock_date' })
-        .select()
-        .single();
-
-      if (error) {
-        console.warn('Database saveEodTillLock notice, keeping local copy:', error.message);
-      }
-
       try {
         localStorage.setItem(`asopalav_eod_lock_${lockData.lock_date}_${lockData.branch_id}`, JSON.stringify(lockData));
       } catch {}
-
-      return { success: true, data: data || lockData };
+      return { success: true, data: lockData };
     } catch (err: any) {
       console.warn('EOD Lock save fallback to local:', err);
       try {
@@ -5723,78 +5820,13 @@ class ERPService {
 
   async getEodTillLock(branchId: string, lockDate: string): Promise<import('@/types/database').EodTillLockRecord | null> {
     try {
-      const { data, error } = await supabase
-        .from('eod_till_locks')
-        .select('*')
-        .eq('branch_id', branchId)
-        .eq('lock_date', lockDate)
-        .maybeSingle();
-
-      if (!error && data) {
-        return {
-          id: data.id,
-          branch_id: data.branch_id,
-          lock_date: data.lock_date,
-          slip_id: data.slip_id,
-          system_cash_balance: Number(data.system_cash_balance) || 0,
-          physical_counted_cash: Number(data.physical_counted_cash) || 0,
-          cash_variance: Number(data.cash_variance) || 0,
-          is_balanced: data.is_balanced,
-          denominations: data.denominations || {},
-          cashier_name: data.cashier_name,
-          supervisor_name: data.supervisor_name,
-          notes: data.notes,
-          locked_at: data.locked_at,
-          created_at: data.created_at,
-        };
-      }
-    } catch (e) {
-      console.warn('getEodTillLock DB lookup error:', e);
-    }
-
-    try {
       const raw = localStorage.getItem(`asopalav_eod_lock_${lockDate}_${branchId}`);
       if (raw) return JSON.parse(raw);
     } catch {}
-
     return null;
   }
 
-  async getAllEodTillLocks(branchId?: string, limit = 60): Promise<import('@/types/database').EodTillLockRecord[]> {
-    try {
-      let query = supabase
-        .from('eod_till_locks')
-        .select('*')
-        .order('lock_date', { ascending: false })
-        .limit(limit);
-
-      if (branchId && branchId !== 'ALL') {
-        query = query.eq('branch_id', branchId);
-      }
-
-      const { data, error } = await query;
-      if (!error && data && data.length > 0) {
-        return data.map((d: any) => ({
-          id: d.id,
-          branch_id: d.branch_id,
-          lock_date: d.lock_date,
-          slip_id: d.slip_id,
-          system_cash_balance: Number(d.system_cash_balance) || 0,
-          physical_counted_cash: Number(d.physical_counted_cash) || 0,
-          cash_variance: Number(d.cash_variance) || 0,
-          is_balanced: d.is_balanced,
-          denominations: d.denominations || {},
-          cashier_name: d.cashier_name,
-          supervisor_name: d.supervisor_name,
-          notes: d.notes,
-          locked_at: d.locked_at,
-          created_at: d.created_at,
-        }));
-      }
-    } catch (e) {
-      console.warn('getAllEodTillLocks DB query fallback:', e);
-    }
-
+  async getAllEodTillLocks(branchId?: string, _limit = 1000): Promise<import('@/types/database').EodTillLockRecord[]> {
     const locks: import('@/types/database').EodTillLockRecord[] = [];
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -5809,7 +5841,6 @@ class ERPService {
         }
       }
     } catch {}
-
     return locks;
   }
 
@@ -5823,30 +5854,35 @@ class ERPService {
       const cleanNumbers = Array.from(new Set(voucherNumbers.filter(Boolean)));
       if (cleanNumbers.length === 0) return {};
 
-      const { data, error } = await supabase
-        .from('voucher_splits')
-        .select('*')
-        .in('voucher_number', cleanNumbers)
-        .order('created_at', { ascending: true });
+      // Chunk in batches of 40 to avoid HTTP query-string URL length overflow and aborted requests (status 0)
+      const BATCH_SIZE = 40;
+      for (let i = 0; i < cleanNumbers.length; i += BATCH_SIZE) {
+        const batch = cleanNumbers.slice(i, i + BATCH_SIZE);
+        const { data, error } = await supabase
+          .from('voucher_splits')
+          .select('*')
+          .in('voucher_number', batch)
+          .order('created_at', { ascending: true });
 
-      if (!error && data) {
-        data.forEach((s: any) => {
-          if (!splitsMap[s.voucher_number]) {
-            splitsMap[s.voucher_number] = [];
-          }
-          splitsMap[s.voucher_number].push({
-            id: s.id,
-            voucher_number: s.voucher_number,
-            branch_id: s.branch_id,
-            branch_code: s.branch_code,
-            staff_code: s.staff_code,
-            staff_name: s.staff_name,
-            department_name: s.department_name,
-            category_name: s.category_name,
-            amount: Number(s.amount) || 0,
-            created_at: s.created_at,
+        if (!error && data) {
+          data.forEach((s: any) => {
+            if (!splitsMap[s.voucher_number]) {
+              splitsMap[s.voucher_number] = [];
+            }
+            splitsMap[s.voucher_number].push({
+              id: s.id,
+              voucher_number: s.voucher_number,
+              branch_id: s.branch_id,
+              branch_code: s.branch_code,
+              staff_code: s.staff_code,
+              staff_name: s.staff_name,
+              department_name: s.department_name,
+              category_name: s.category_name,
+              amount: Number(s.amount) || 0,
+              created_at: s.created_at,
+            });
           });
-        });
+        }
       }
     } catch (e) {
       console.warn('getSplitsForVouchers error:', e);

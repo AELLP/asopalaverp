@@ -8,6 +8,7 @@ import {
   CourierPartner,
   StaffMember,
 } from '@/types/database';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 
 interface MasterDataCache {
   categories: ExpenseCategory[];
@@ -74,16 +75,31 @@ export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
     masterDataInFlight = (async () => {
       try {
         const [cRes, dRes, crRes, sRes] = await Promise.all([
-          supabase.from('expense_categories').select('*').eq('is_active', true).order('category_name'),
-          supabase.from('departments').select('*').eq('is_active', true).order('department_name'),
-          supabase.from('courier_partners').select('*').eq('is_active', true).order('partner_name'),
-          supabase.from('staff_members').select('*').eq('is_active', true).order('first_name'),
+          supabase.from('expense_categories').select('*').order('category_name'),
+          supabase.from('departments').select('*').order('department_name'),
+          supabase.from('courier_partners').select('*').order('partner_name'),
+          supabase.from('staff_members').select('*').order('first_name'),
         ]);
+
+        const enrichedCategories = (cRes.data || []).map((c: any) => ({
+          ...c,
+          parent_category: getParentCategory(c.category_name, c.color_theme),
+        }));
+
+        const enrichedDepartments = (dRes.data || []).map((d: any) => {
+          const parent = getParentDepartment(d.department_code || d.department_name);
+          return {
+            ...d,
+            parent_division_code: parent.code,
+            parent_division_name: parent.name,
+            parent_department: parent.name,
+          };
+        });
 
         set({
           masterData: {
-            categories: cRes.data || [],
-            departments: dRes.data || [],
+            categories: enrichedCategories,
+            departments: enrichedDepartments,
             couriers: crRes.data || [],
             staff: sRes.data || [],
             lastFetched: Date.now(),
@@ -121,22 +137,43 @@ export const useVoucherStore = create<VoucherStoreState>((set, get) => ({
 
     vouchersInFlight[cacheKey] = (async () => {
       try {
-        let vQuery = supabase
-          .from('expense_vouchers')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(10000);
+        let voucherList: ExpenseVoucher[] = [];
+        let from = 0;
+        const PAGE_SIZE = 1000;
+        let hasMore = true;
 
-        if (!isAll) {
-          vQuery = vQuery.or(`branch_id.eq.${cacheKey},branch_id.eq.${code},branch_code.eq.${code}`);
+        // Paginate across PostgREST 1000-row limit so ALL historical vouchers are loaded
+        while (hasMore) {
+          let vQuery = supabase
+            .from('expense_vouchers')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(from, from + PAGE_SIZE - 1);
+
+          if (!isAll) {
+            vQuery = vQuery.or(`branch_id.eq.${cacheKey},branch_id.eq.${code},branch_code.eq.${code}`);
+          }
+
+          const { data, error } = await vQuery;
+          if (error || !data || data.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          voucherList.push(...data);
+          if (data.length < PAGE_SIZE) {
+            hasMore = false;
+          } else {
+            from += PAGE_SIZE;
+          }
         }
 
-        const { data, error } = await vQuery;
-
-        let voucherList: ExpenseVoucher[] = [];
-        if (!error && data !== null) {
-          voucherList = data;
-          localStorage.setItem(`asopalav_vouchers_${cacheKey}`, JSON.stringify(data.slice(0, 500)));
+        if (voucherList.length > 0) {
+          try {
+            localStorage.setItem(`asopalav_vouchers_${cacheKey}`, JSON.stringify(voucherList.slice(0, 500)));
+          } catch {
+            // Safe storage quota handling
+          }
         } else {
           const local =
             localStorage.getItem(`asopalav_vouchers_${cacheKey}`) ||

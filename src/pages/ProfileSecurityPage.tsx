@@ -240,10 +240,9 @@ export const ProfileSecurityPage: React.FC = () => {
 
       const storedHash = dbUser?.password_hash || (user as any).password_hash;
       const isCurrentValid =
-        storedHash &&
-        (storedHash === currentPassword ||
-          ((storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) &&
-            bcrypt.compareSync(currentPassword, storedHash)));
+        Boolean(storedHash) &&
+        (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) &&
+        bcrypt.compareSync(currentPassword, storedHash);
 
       if (dbErr || !isCurrentValid) {
         setSecurityError('Current password is incorrect.');
@@ -469,7 +468,7 @@ export const ProfileSecurityPage: React.FC = () => {
       </div>
 
       {/* 3. Main Full-Width Content Area */}
-      <main className="max-w-[1600px] mx-auto px-4 lg:px-6 py-5 w-full flex-1">
+      <div className="workspace-view max-w-[1600px] mx-auto px-4 lg:px-6 py-5 w-full flex-1">
         <div className="space-y-6">
           {/* TAB 1: ACCOUNT & AVATAR PROFILE */}
           {activeTabId === 'account' && (
@@ -690,6 +689,7 @@ export const ProfileSecurityPage: React.FC = () => {
                   <div className="relative">
                     <input
                       type={showCurrentPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
                       placeholder="Enter current password to verify identity..."
@@ -714,6 +714,7 @@ export const ProfileSecurityPage: React.FC = () => {
                     <div className="relative">
                       <input
                         type={showNewPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         placeholder="Min 8 characters (1 uppercase, 1 number, 1 symbol)..."
@@ -736,6 +737,7 @@ export const ProfileSecurityPage: React.FC = () => {
                     <div className="relative">
                       <input
                         type={showConfirmPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         placeholder="Repeat new password..."
@@ -763,6 +765,7 @@ export const ProfileSecurityPage: React.FC = () => {
                   </div>
                   <input
                     type="password"
+                    autoComplete="new-password"
                     maxLength={4}
                     inputMode="numeric"
                     value={pin}
@@ -921,7 +924,7 @@ export const ProfileSecurityPage: React.FC = () => {
 
 
         </div>
-      </main>
+      </div>
 
       {/* ========================================================================= */}
       {/* 1. SAVE PROFILE PRE-COMMIT CONFIRMATION PREVIEW MODAL                     */}

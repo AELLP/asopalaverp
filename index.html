@@ -7,6 +7,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" id="color-scheme-meta" />
     <meta name="theme-color" content="#141414" id="theme-color-meta" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -17,16 +18,23 @@
       (function() {
         try {
           var saved = localStorage.getItem('asopalav-theme');
+          var metaColorScheme = document.querySelector('meta[name="color-scheme"]');
           if (saved === 'light') {
             document.documentElement.classList.remove('dark', 'soft-dark');
             document.documentElement.setAttribute('data-theme', 'light');
+            document.documentElement.style.colorScheme = 'light';
+            if (metaColorScheme) metaColorScheme.setAttribute('content', 'light');
           } else if (saved === 'soft-dark') {
             document.documentElement.classList.add('dark', 'soft-dark');
             document.documentElement.setAttribute('data-theme', 'soft-dark');
+            document.documentElement.style.colorScheme = 'dark';
+            if (metaColorScheme) metaColorScheme.setAttribute('content', 'dark');
           } else {
             document.documentElement.classList.add('dark');
             document.documentElement.classList.remove('soft-dark');
             document.documentElement.setAttribute('data-theme', 'dark');
+            document.documentElement.style.colorScheme = 'dark';
+            if (metaColorScheme) metaColorScheme.setAttribute('content', 'dark');
           }
         } catch (e) {}
       })();

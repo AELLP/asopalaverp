@@ -11,7 +11,7 @@ import { VoucherTable } from '@/components/vouchers/VoucherTable';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { SegmentedControl } from '@/components/ui';
-import { formatINR, cn, triggerHaptic, normalizeBranchCode, normalizeDateToYMD } from '@/lib/utils';
+import { formatINR, formatCompactINR, cn, triggerHaptic, normalizeBranchCode, normalizeDateToYMD } from '@/lib/utils';
 import { getLocalAuditLogs } from '@/lib/audit';
 import { showToast } from '@/components/ui/ToastContainer';
 import {
@@ -402,6 +402,11 @@ export const DashboardPage: React.FC = () => {
     let upiCount = 0;
 
     filteredLedger.forEach((entry) => {
+      const isOpeningEntry =
+        entry.reference_number === 'FLT-869729' ||
+        (entry.remarks && (entry.remarks.includes('Opening Cash Balance') || entry.remarks.includes('Oct Month Opening Balance')));
+      if (isOpeningEntry) return;
+
       const credit = Number(entry.credit_amount) || 0;
       if (credit > 0) {
         totalInflow += credit;
@@ -475,8 +480,8 @@ export const DashboardPage: React.FC = () => {
   const dailyCashSummary = useMemo(() => {
     const sDate = tableStartDate || undefined;
     const eDate = tableEndDate || undefined;
-    return calculateDailyCashBalances(ledgerEntries, cashBalance, sDate, eDate);
-  }, [ledgerEntries, cashBalance, tableStartDate, tableEndDate]);
+    return calculateDailyCashBalances(ledgerEntries, cashBalance, sDate, eDate, filteredVouchers);
+  }, [ledgerEntries, cashBalance, tableStartDate, tableEndDate, filteredVouchers]);
 
   // Daily Cash & UPI Treasury Balances
   const treasuryBreakdown = useMemo(() => {
@@ -716,12 +721,12 @@ export const DashboardPage: React.FC = () => {
                 <LayoutDashboard className="w-5 h-5 text-[#3ecf8e]" />
                 <span>
                   {activeViewMode === 'cashier'
-                    ? 'Cash Desk & Shift Till Operations'
+                    ? 'Counter Cash & Day Operations'
                     : activeViewMode === 'manager'
-                    ? 'Showroom Operational Command'
+                    ? 'Showroom Operations'
                     : activeViewMode === 'auditor'
-                    ? 'Compliance & Internal Audit Studio'
-                    : 'Executive Enterprise Command Center'}
+                    ? 'Audit & Compliance'
+                    : 'Showroom Overview & Command Center'}
                 </span>
               </h1>
 
@@ -778,12 +783,12 @@ export const DashboardPage: React.FC = () => {
 
             <p className="text-xs text-slate-500 dark:text-[#A1A1A1] font-sans mt-0.5">
               {activeViewMode === 'cashier'
-                ? `Today's shift till balance, physical drawer cash, and payment vouchers for ${showroomTitle}.`
+                ? `Today's cash balance, drawer cash count, and expense bills for ${showroomTitle}.`
                 : activeViewMode === 'manager'
-                ? `Store cost centers, staff advance follow-ups, liquidity, and daily shift balancing for ${showroomTitle}.`
+                ? `Department expenses, staff advances, cash balance, and daily closing for ${showroomTitle}.`
                 : activeViewMode === 'auditor'
-                ? `Immutable audit logs, voided voucher scrutiny, duplicate risk exposure, and statutory compliance for ${showroomTitle}.`
-                : `Consolidated enterprise financial telemetry, multi-branch liquidity, MoM comparisons, and audit intelligence.`}
+                ? `Security logs, cancelled bill verification, duplicate check, and tax compliance for ${showroomTitle}.`
+                : `Showroom financial overview, branch cash balances, and expense reports.`}
             </p>
           </div>
 
@@ -917,9 +922,9 @@ export const DashboardPage: React.FC = () => {
               />
 
               <MetricCard
-                label="Expected Physical Cash"
+                label="Expected Cash in Drawer"
                 value={formatINR(dailyCashSummary.currentWalletCash)}
-                subValue="Must match physical drawer notes"
+                subValue="Must match drawer cash count"
                 statusDotColor={isLowFloatAlert ? '#ef4444' : '#3ecf8e'}
                 badge={isLowFloatAlert ? 'LOW FLOAT' : 'IN TILL'}
                 badgeColor={isLowFloatAlert ? 'amber' : 'emerald'}
@@ -933,7 +938,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="flex items-center gap-2.5">
                   <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
                   <span>
-                    <strong>Low Float Alert:</strong> Physical cash is ₹{cashBalance.toLocaleString('en-IN')}, below minimum threshold (₹{minCashThreshold.toLocaleString('en-IN')}). Contact Store Manager for float injection.
+                    <strong>Low Float Alert:</strong> Cash in drawer is ₹{cashBalance.toLocaleString('en-IN')}, below minimum threshold (₹{minCashThreshold.toLocaleString('en-IN')}). Contact Store Manager for float injection.
                   </span>
                 </div>
               </div>
@@ -1432,12 +1437,16 @@ export const DashboardPage: React.FC = () => {
             {/* TAB 1: LIVE OPERATIONS (Instant Render, Zero Lag) */}
             {adminTab === 'overview' && (
               <div className="space-y-4 animate-in fade-in duration-150">
-                {/* 4 Metric Cards Telemetry Matrix: Dual Cash & UPI Day-Balance Architecture */}
+                {/* 4 Metric Cards Telemetry Matrix: Dual Cash & UPI Day/Period Balance Architecture */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <MetricCard
-                    label="Day Opening Balance"
-                    value={formatINR(treasuryBreakdown.total.opening)}
-                    subValue={`Cash: ${formatINR(treasuryBreakdown.cash.opening)} | UPI: ${formatINR(treasuryBreakdown.upi.opening)}`}
+                    label={timeRange === 'today' ? "Day Opening Balance" : "Period Opening Balance"}
+                    value={timeRange === 'today' ? formatINR(treasuryBreakdown.total.opening) : formatINR(dailyCashSummary.periodOpening)}
+                    subValue={
+                      timeRange === 'today'
+                        ? `Cash: ${formatINR(treasuryBreakdown.cash.opening)} | UPI: ${formatINR(treasuryBreakdown.upi.opening)}`
+                        : `Starting cash in till (${tableStartDate || 'Start'})`
+                    }
                     badge="OPENING"
                     badgeColor="neutral"
                     icon={Wallet}
@@ -1445,9 +1454,13 @@ export const DashboardPage: React.FC = () => {
                   />
 
                   <MetricCard
-                    label="Day Inflow (Credits)"
-                    value={`+${formatINR(treasuryBreakdown.total.inflow)}`}
-                    subValue={`Cash: +${formatINR(treasuryBreakdown.cash.inflow)} | UPI: +${formatINR(treasuryBreakdown.upi.inflow)}`}
+                    label={timeRange === 'today' ? "Day Inflow (Credits)" : "Period Inflow (Credits)"}
+                    value={timeRange === 'today' ? `+${formatINR(treasuryBreakdown.total.inflow)}` : `+${formatINR(inflowMetrics.totalInflow)}`}
+                    subValue={
+                      timeRange === 'today'
+                        ? `Cash: +${formatINR(treasuryBreakdown.cash.inflow)} | UPI: +${formatINR(treasuryBreakdown.upi.inflow)}`
+                        : `Cash: +${formatCompactINR(inflowMetrics.cashInflow)} | UPI: +${formatCompactINR(inflowMetrics.upiInflow)} (${inflowMetrics.cashCount + inflowMetrics.upiCount} additions)`
+                    }
                     statusDotColor="#3ecf8e"
                     badge="INFLOW"
                     badgeColor="emerald"
@@ -1456,9 +1469,13 @@ export const DashboardPage: React.FC = () => {
                   />
 
                   <MetricCard
-                    label="Total Pay Today"
-                    value={`-${formatINR(treasuryBreakdown.total.outflow)}`}
-                    subValue={`Cash: -${formatINR(treasuryBreakdown.cash.outflow)} | UPI: -${formatINR(treasuryBreakdown.upi.outflow)}`}
+                    label={timeRange === 'today' ? "Total Pay Today" : "Total Period Outflow"}
+                    value={timeRange === 'today' ? `-${formatINR(treasuryBreakdown.total.outflow)}` : `-${formatINR(metrics.totalSpend)}`}
+                    subValue={
+                      timeRange === 'today'
+                        ? `Cash: -${formatINR(treasuryBreakdown.cash.outflow)} | UPI: -${formatINR(treasuryBreakdown.upi.outflow)}`
+                        : `Cash: -${formatCompactINR(metrics.cashSpend)} | UPI: -${formatCompactINR(metrics.upiSpend)} (${metrics.totalBills} bills)`
+                    }
                     badge="PAID OUT"
                     badgeColor="neutral"
                     icon={Receipt}
@@ -1466,11 +1483,15 @@ export const DashboardPage: React.FC = () => {
                   />
 
                   <MetricCard
-                    label="Remaining Balance as per Today"
-                    value={formatINR(treasuryBreakdown.total.closing)}
-                    subValue={`Cash: ${formatINR(treasuryBreakdown.cash.closing)} | UPI: ${formatINR(treasuryBreakdown.upi.closing)}`}
+                    label={timeRange === 'today' ? "Remaining Balance as per Today" : "Period Closing Balance"}
+                    value={timeRange === 'today' ? formatINR(treasuryBreakdown.total.closing) : formatINR(dailyCashSummary.periodClosing)}
+                    subValue={
+                      timeRange === 'today'
+                        ? `Cash: ${formatINR(treasuryBreakdown.cash.closing)} | UPI: ${formatINR(treasuryBreakdown.upi.closing)}`
+                        : `Ending cash in drawer (${tableEndDate || 'Today'})`
+                    }
                     statusDotColor={isLowFloatAlert ? '#ef4444' : '#3ecf8e'}
-                    badge={isLowFloatAlert ? 'LOW FLOAT' : 'REMAINING'}
+                    badge={timeRange === 'today' ? (isLowFloatAlert ? 'LOW FLOAT' : 'REMAINING') : 'CLOSING'}
                     badgeColor={isLowFloatAlert ? 'amber' : 'emerald'}
                     icon={Building2}
                     onClick={() => setActivePage('treasury')}

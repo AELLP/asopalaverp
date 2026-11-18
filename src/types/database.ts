@@ -89,6 +89,7 @@ export interface ExpenseCategory {
   category_name: string;
   color_theme: string;
   is_active: boolean;
+  parent_category?: string;
   created_at?: string;
 }
 
@@ -96,6 +97,9 @@ export interface Department {
   department_code: string;
   department_name: string;
   is_active: boolean;
+  parent_division_code?: string;
+  parent_division_name?: string;
+  parent_department?: string;
   created_at?: string;
 }
 

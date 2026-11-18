@@ -18,6 +18,7 @@ import { AccessDeniedView } from '@/components/common/AccessDeniedView';
 import {
   Wallet,
   Coins,
+  IndianRupee,
   Calculator,  Building2,
   TrendingUp,  Receipt,  Check,  RotateCcw,  Search,  FileSpreadsheet,  X,  FileText,  RefreshCw,  Copy,} from 'lucide-react';
 import { useGsapContext } from '@/hooks/useGsap';
@@ -222,14 +223,19 @@ export const CashDrawerTreasuryPage: React.FC = () => {
   }, [dateFilter, customDate, customStartDate, customEndDate, selectedDayFilter]);
 
   // Mathematical Day-by-Day Cash Balance Engine
+  const cachedVouchers = useMemo(() => {
+    return Object.values(useVoucherStore.getState().vouchers).flat();
+  }, [allLedgerEntries]);
+
   const dailyCashSummary = useMemo(() => {
     return calculateDailyCashBalances(
       allLedgerEntries,
       currentCashBalance,
       dateBounds.start,
-      dateBounds.end
+      dateBounds.end,
+      cachedVouchers
     );
-  }, [allLedgerEntries, currentCashBalance, dateBounds.start, dateBounds.end]);
+  }, [allLedgerEntries, currentCashBalance, dateBounds.start, dateBounds.end, cachedVouchers]);
 
   // Dynamically compute running balance anchored backwards from the verified drawer balance
     // Cross-reference vouchers against ledger to detect any cash check discrepancies
@@ -280,7 +286,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     }
 
     // Sort order
-    const sorted = [...list].sort((a, b) => {
+    const sorted = list.toSorted((a, b) => {
       if (sortBy === 'oldest') {
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       }
@@ -315,19 +321,33 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     let totalExpenses = 0;
     let expenseCount = 0;
     let cashExpenseCount = 0;
+    let cashExpenseTotal = 0;
     let upiExpenseCount = 0;
+    let upiExpenseTotal = 0;
     let totalAdjustments = 0;
     let adjustmentCount = 0;
     let creditCount = 0;
     let debitCount = 0;
 
-    allLedgerEntries.forEach((entry) => {
+    const entriesInScope = allLedgerEntries.filter((entry) => {
+      const d = (entry.created_at || '').trim().slice(0, 10);
+      if (selectedDayFilter) return d === selectedDayFilter.trim();
+      if (dateBounds.start && d < dateBounds.start) return false;
+      if (dateBounds.end && d > dateBounds.end) return false;
+      return true;
+    });
+
+    entriesInScope.forEach((entry) => {
       const credit = Number(entry.credit_amount) || 0;
       const debit = Number(entry.debit_amount) || 0;
       const isCash = entry.wallet_type === 'Cash' || !entry.wallet_type;
       const isUpi = entry.wallet_type === 'UPI';
 
-      if (credit > 0) {
+      const isOpeningEntry =
+        entry.reference_number === 'FLT-869729' ||
+        (entry.remarks && (entry.remarks.includes('Opening Cash Balance') || entry.remarks.includes('Oct Month Opening Balance')));
+
+      if (credit > 0 && !isOpeningEntry) {
         creditCount++;
         if (isCash) {
           totalCashIn += credit;
@@ -342,15 +362,21 @@ export const CashDrawerTreasuryPage: React.FC = () => {
         debitCount++;
         if (isCash) {
           totalCashOut += debit;
-          if (entry.transaction_type === 'Expense_Voucher') cashExpenseCount++;
+          if (entry.transaction_type === 'Expense_Voucher') {
+            cashExpenseCount++;
+            cashExpenseTotal += debit;
+          }
         }
         if (isUpi) {
           totalUpiOut += debit;
-          if (entry.transaction_type === 'Expense_Voucher') upiExpenseCount++;
+          if (entry.transaction_type === 'Expense_Voucher') {
+            upiExpenseCount++;
+            upiExpenseTotal += debit;
+          }
         }
       }
 
-      if (entry.transaction_type === 'Float_Topup' || (credit > 0 && !entry.transaction_type)) {
+      if ((entry.transaction_type === 'Float_Topup' || (credit > 0 && !entry.transaction_type)) && !isOpeningEntry) {
         topupCount++;
         totalFloatTopups += credit;
       } else if (entry.transaction_type === 'Safe_Drop') {
@@ -384,13 +410,15 @@ export const CashDrawerTreasuryPage: React.FC = () => {
       totalExpenses,
       expenseCount,
       cashExpenseCount,
+      cashExpenseTotal,
       upiExpenseCount,
+      upiExpenseTotal,
       totalAdjustments,
       adjustmentCount,
       creditCount,
       debitCount,
     };
-  }, [allLedgerEntries]);
+  }, [allLedgerEntries, dateBounds, selectedDayFilter]);
 
   const handleCopyRef = (refText: string) => {
     navigator.clipboard.writeText(refText);
@@ -431,7 +459,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
     try {
       const isHistorical = entryDate !== formatDateFns(new Date(), 'yyyy-MM-dd');
       const dateTag = isHistorical ? ` [Date: ${entryDate}]` : '';
-      const defaultNote = walletType === 'Cash' ? 'Cash Box Inflow' : 'UPI Float Inflow';
+      const defaultNote = walletType === 'Cash' ? 'Cash Inflow' : 'UPI Inflow';
       const noteContent = referenceNotes.trim() || defaultNote;
       const modeTag = transferMode ? ` [Transfer Mode: ${transferMode}]` : '';
       const fullRemarks = `${noteContent}${modeTag}${dateTag}`.trim();
@@ -515,7 +543,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               title="Daily EOD physical notes count and reconciliation lock"
             >
               <Calculator className="w-3.5 h-3.5 text-[#3ecf8e]" />
-              <span>Till Count Lock (Beta)</span>
+              <span>Day-End Cash Count</span>
             </button>
 
             <button
@@ -654,9 +682,9 @@ export const CashDrawerTreasuryPage: React.FC = () => {
 
       {/* 2. Cash & UPI Balances Telemetry Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* KPI 1: Cash Drawer Till */}
+        {/* KPI 1: Cash Drawer Balance */}
         <MetricCard
-          label="Cash Drawer Till"
+          label="Cash Drawer Balance"
           value={
             <>
               <span className="sm:hidden">{formatCompactINR(currentCashBalance)}</span>
@@ -679,7 +707,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
             </>
           }
           subValue="Verified Digital UPI Float"
-          badge="ONLINE UPI"
+          badge="UPI"
           badgeColor="blue"
           icon={Building2}
         />
@@ -709,7 +737,11 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               <span className="hidden sm:inline">-{formatINR(dailyCashSummary.periodOutflows)}</span>
             </>
           }
-          subValue={`${treasurySummary.cashExpenseCount} cash expense vouchers`}
+          subValue={
+            treasurySummary.totalAdjustments > 0
+              ? `${treasurySummary.cashExpenseCount} cash vouchers (${formatCompactINR(treasurySummary.cashExpenseTotal)}) + adjustments`
+              : `${treasurySummary.cashExpenseCount} cash vouchers (${formatCompactINR(treasurySummary.cashExpenseTotal)})`
+          }
           badge="SPENT"
           badgeColor="neutral"
           icon={Receipt}
@@ -732,25 +764,27 @@ export const CashDrawerTreasuryPage: React.FC = () => {
                   type="button"
                   onClick={() => setWalletType('Cash')}
                   className={cn(
-                    'px-3 py-1 rounded-[4px] text-xs font-sans transition-all cursor-pointer font-medium',
+                    'px-3 py-1 rounded-[4px] text-xs font-sans transition-all cursor-pointer font-medium flex items-center gap-1.5',
                     walletType === 'Cash'
-                      ? 'bg-white dark:bg-[#282828] text-slate-900 dark:text-white font-medium border border-slate-200 dark:border-[#383838] shadow-xs'
+                      ? 'bg-white dark:bg-[#282828] text-emerald-700 dark:text-[#3ecf8e] font-medium border border-slate-200 dark:border-[#383838] shadow-xs'
                       : 'text-slate-500 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-white border border-transparent'
                   )}
                 >
-                  Cash
+                  <IndianRupee className="w-3.5 h-3.5 stroke-[2.2]" />
+                  <span>Cash</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setWalletType('UPI')}
                   className={cn(
-                    'px-3 py-1 rounded-[4px] text-xs font-sans transition-all cursor-pointer font-medium',
+                    'px-3 py-1 rounded-[4px] text-xs font-sans transition-all cursor-pointer font-medium flex items-center gap-1.5',
                     walletType === 'UPI'
-                      ? 'bg-white dark:bg-[#282828] text-slate-900 dark:text-white font-medium border border-slate-200 dark:border-[#383838] shadow-xs'
+                      ? 'bg-white dark:bg-[#282828] text-sky-600 dark:text-sky-400 font-medium border border-slate-200 dark:border-[#383838] shadow-xs'
                       : 'text-slate-500 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-white border border-transparent'
                   )}
                 >
-                  Online UPI
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>UPI</span>
                 </button>
               </div>
 
@@ -949,7 +983,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Wallet Account</span>
                 <span className="font-semibold text-slate-900 dark:text-white font-mono">
-                  {viewLedgerEntry.wallet_type === 'UPI' ? 'Online UPI Account' : 'Cash Drawer Till Box'}
+                  {viewLedgerEntry.wallet_type === 'UPI' ? 'UPI Account' : 'Cash Drawer'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
@@ -1048,7 +1082,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Wallet</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{walletType === 'Cash' ? 'Cash Box' : 'Online UPI'}</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{walletType === 'Cash' ? 'Cash' : 'UPI'}</span>
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Date</span>
@@ -1056,7 +1090,7 @@ export const CashDrawerTreasuryPage: React.FC = () => {
               </div>
               <div className="flex justify-between items-center text-slate-500 dark:text-zinc-400">
                 <span>Reason</span>
-                <span className="font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{referenceNotes || (walletType === 'Cash' ? 'Cash Box Inflow' : 'UPI Float Inflow')}</span>
+                <span className="font-semibold text-slate-900 dark:text-white truncate max-w-[200px]">{referenceNotes || (walletType === 'Cash' ? 'Cash Inflow' : 'UPI Inflow')}</span>
               </div>
               <div className="pt-2 border-t border-slate-200 dark:border-[#242424] flex justify-between items-baseline">
                 <span className="text-xs uppercase font-sans text-slate-500">Amount</span>

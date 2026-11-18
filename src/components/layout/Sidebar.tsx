@@ -764,26 +764,29 @@ export const Sidebar: React.FC = () => {
   /* NATIVE SLIDE-OVER MOBILE DRAWER (< lg)                                    */
   /* ========================================================================= */
   const mobileSlideOverDrawer = (
-    <div className="lg:hidden fixed inset-0 z-50 flex select-none">
+    <div className="lg:hidden fixed inset-0 z-[100] flex select-none">
       {/* 1. Backdrop Overlay */}
       <div
         onClick={() => {
           setMobileSidebarOpen(false);
         }}
-        className="fixed inset-0 bg-black/75 transition-opacity duration-200 animate-in fade-in"
+        className="fixed inset-0 bg-black/80 transition-opacity duration-200 animate-in fade-in"
       />
 
-      {/* 2. Full-Screen Mobile Drawer Container */}
-      <div className="relative w-full h-full bg-white dark:bg-[#141414] shadow-2xl flex flex-col overflow-hidden z-10 animate-in fade-in slide-in-from-bottom-2 duration-200">
+      {/* 2. Slide-Over Mobile Drawer Container */}
+      <div className="relative w-[300px] max-w-[85vw] h-full bg-white dark:bg-[#141414] shadow-2xl flex flex-col overflow-hidden z-10 animate-in slide-in-from-left duration-200 border-r border-slate-200/80 dark:border-[#242424]">
         {/* Drawer Header */}
-        <div className="h-13 px-4 flex items-center justify-between border-b border-slate-200/80 dark:border-[#242424] bg-[#fafafa] dark:bg-[#171717] shrink-0">
+        <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200/80 dark:border-[#242424] bg-slate-50/80 dark:bg-[#161616] shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-[6px] bg-[#3ecf8e] text-[#171717] flex items-center justify-center shadow-xs shrink-0 font-bold font-mono text-xs">
               {currentBadgeCode}
             </div>
             <div className="min-w-0">
-              <span className="text-xs font-semibold tracking-tight text-slate-900 dark:text-white font-sans truncate block">
+              <span className="text-xs font-semibold tracking-tight text-slate-900 dark:text-white font-sans truncate block leading-tight">
                 {brandName} ERP
+              </span>
+              <span className="text-[10px] text-slate-500 dark:text-[#a1a1a1] font-sans truncate block leading-tight mt-0.5">
+                {activeBranch?.branch_name || 'Satellite'} ({activeBranch?.branch_code || 'ASI'})
               </span>
             </div>
           </div>
@@ -802,7 +805,7 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Scrollable Navigation List */}
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
           {navSections.map((section, sIdx) => {
             const visibleItems = section.items.filter((item) => {
               if (!item.permission) return true;
@@ -812,8 +815,8 @@ export const Sidebar: React.FC = () => {
             if (visibleItems.length === 0) return null;
 
             return (
-              <div key={sIdx} className={cn('space-y-0.5', sIdx > 0 && 'pt-2.5 mt-1 border-t border-slate-200/60 dark:border-[#242424]')}>
-                <div className="px-2.5 pb-1 text-[11px] font-mono font-medium uppercase tracking-wider text-slate-400 dark:text-[#707070]">
+              <div key={sIdx} className={cn('space-y-1', sIdx > 0 && 'pt-3 border-t border-slate-200/60 dark:border-[#242424]')}>
+                <div className="px-3 pt-1 pb-1 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400 dark:text-[#707070]">
                   {section.title}
                 </div>
                 <div className="space-y-0.5">
@@ -831,7 +834,7 @@ export const Sidebar: React.FC = () => {
                         className={cn(
                           'w-full flex items-center justify-between px-3 py-2.5 rounded-[6px] text-xs transition-colors font-sans cursor-pointer',
                           isActive
-                            ? 'bg-emerald-500/10 text-emerald-800 dark:text-[#3ecf8e] font-medium border border-emerald-500/20'
+                            ? 'bg-emerald-500/10 text-emerald-800 dark:text-[#3ecf8e] font-semibold border border-emerald-500/20 shadow-2xs'
                             : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#202020]'
                         )}
                       >
@@ -854,29 +857,48 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Mobile Drawer Footer */}
-        <div className="p-3 border-t border-slate-200/80 dark:border-[#242424] bg-[#fafafa] dark:bg-[#171717] space-y-2 shrink-0">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-full bg-[#3ecf8e] text-[#171717] font-mono font-bold text-[10px] flex items-center justify-center">
-                {userInitials}
+        <div className="p-3 border-t border-slate-200/80 dark:border-[#242424] bg-slate-50/80 dark:bg-[#161616] space-y-2.5 shrink-0">
+          {/* User Profile Card */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePage('profile');
+              setMobileSidebarOpen(false);
+            }}
+            className="w-full flex items-center justify-between p-2 rounded-[6px] bg-white dark:bg-[#1a1a1a] border border-slate-200/80 dark:border-[#282828] text-left hover:bg-slate-100 dark:hover:bg-[#202020] transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <UserAvatar
+                src={user?.avatar_url}
+                firstName={user?.first_name}
+                lastName={user?.last_name}
+                name={user?.username}
+                size={32}
+                className="border border-emerald-500/40 shrink-0 shadow-2xs"
+              />
+              <div className="truncate min-w-0">
+                <div className="font-semibold text-xs text-slate-900 dark:text-white truncate leading-tight">
+                  {user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.username || 'Admin'}
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-[#8e8e8e] font-mono truncate mt-0.5">
+                  {user?.role_code ? user.role_code.replace('_', ' ') : 'Super Admin'}
+                </div>
               </div>
-              <span className="font-medium text-slate-800 dark:text-zinc-200 truncate">
-                {user?.first_name || 'Admin'}
-              </span>
             </div>
-            <span className="text-[10px] font-mono text-emerald-600 dark:text-[#3ecf8e] tabular-nums">
+            <span className="text-[10px] font-mono text-emerald-600 dark:text-[#3ecf8e] tabular-nums font-medium shrink-0 ml-1">
               {sessionRemainingText}
             </span>
-          </div>
+          </button>
 
-          <div className="flex items-center gap-2 pt-1">
+          {/* Full Action Buttons (Lock Screen & Sign Out) */}
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => {
                 setMobileSidebarOpen(false);
                 lockScreen();
               }}
-              className="flex-1 h-8.5 rounded-[6px] bg-slate-100 dark:bg-[#222222] border border-slate-200/80 dark:border-[#2e2e2e] text-slate-700 dark:text-zinc-200 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
+              className="h-9 px-3 rounded-[6px] bg-white dark:bg-[#1a1a1a] hover:bg-amber-50 dark:hover:bg-amber-950/20 text-slate-700 dark:text-zinc-200 hover:text-amber-600 dark:hover:text-amber-400 border border-slate-200/80 dark:border-[#2a2a2a] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
             >
               <Lock className="w-3.5 h-3.5" />
               <span>Lock Screen</span>
@@ -888,9 +910,45 @@ export const Sidebar: React.FC = () => {
                 setMobileSidebarOpen(false);
                 logout();
               }}
-              className="h-8.5 px-3.5 rounded-[6px] bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer"
+              className="h-9 px-3 rounded-[6px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/25 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+
+          {/* Utilities Row: Theme Toggle + Shortcuts */}
+          <div className="grid grid-cols-2 gap-2 pt-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                toggleTheme();
+              }}
+              className="h-8 rounded-[6px] bg-white dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222222] border border-slate-200/80 dark:border-[#2a2a2a] text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              {theme === 'light' ? (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>Dark Mode</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Light Mode</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMobileSidebarOpen(false);
+                setShortcutsModalOpen(true);
+              }}
+              className="h-8 rounded-[6px] bg-white dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222222] border border-slate-200/80 dark:border-[#2a2a2a] text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              <span>Shortcuts</span>
             </button>
           </div>
         </div>

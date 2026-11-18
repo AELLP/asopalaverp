@@ -14,6 +14,7 @@ import {
   Wallet,
   CloudOff,  Calculator,
   User,
+  IndianRupee,
   Lock,
   LogOut,
   ChevronDown,
@@ -258,7 +259,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                 <button
                   type="button"
                   onClick={() => setIsCashDrawerPopoverOpen((prev) => !prev)}
-                  aria-label={`Cash Box Balance: ₹${cashBalance.toLocaleString('en-IN')}`}
+                  aria-label={`Cash Balance: ₹${cashBalance.toLocaleString('en-IN')}`}
                   className={cn(
                     'hidden lg:flex items-center gap-2 h-9 px-3 rounded-[6px] border text-xs font-mono transition-colors shadow-2xs cursor-pointer select-none shrink-0',
                     isCashDrawerPopoverOpen
@@ -267,7 +268,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onOpenKeyboardHelp }) => {
                   )}
                   title="Today's Cash Drawer Balance (Click to view Opening/Closing sheet)"
                 >
-                  <Wallet className="w-4 h-4 text-slate-400 dark:text-[#707070] shrink-0 stroke-[1.8]" />
+                  <IndianRupee className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] shrink-0 stroke-[2.2]" />
                   <span className="text-[11px] uppercase font-mono tracking-wider text-slate-400 dark:text-[#707070]">Cash:</span>
                   <strong className="font-semibold tabular-nums text-xs text-emerald-600 dark:text-[#3ecf8e]">
                     <AnimatedCounter value={cashBalance} isCurrency />

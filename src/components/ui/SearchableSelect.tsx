@@ -8,6 +8,7 @@ export interface SelectOption {
   subLabel?: string | null;
   sublabel?: string | null;
   badge?: string | null;
+  group?: string | null;
   icon?: React.ComponentType<{ className?: string }>;
 }
 
@@ -59,16 +60,17 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const [search, setSearch] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [computedPlacement, setComputedPlacement] = useState<'top' | 'bottom'>('bottom');
+  const [computedAlign, setComputedAlign] = useState<'left' | 'right'>('left');
 
   const instanceIdRef = useRef('select-' + Math.random().toString(36).substring(2, 9));
   const containerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  // Normalize options safely to SelectOption[] (handles null, undefined, strings, numbers, objects)
+  // Normalize options safely to SelectOption[]
   const normalizedOptions: SelectOption[] = useMemo(() => {
     if (!Array.isArray(options)) return [];
-    return options
+    const mapped = options
       .filter((opt) => opt !== null && opt !== undefined)
       .map((opt) => {
         if (typeof opt === 'string' || typeof opt === 'number') {
@@ -78,27 +80,56 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
         const val = String(opt.value ?? '');
         const lbl = String(opt.label ?? opt.value ?? '');
         const sub = opt.subLabel ?? opt.sublabel ?? undefined;
+        const grp = opt.group && typeof opt.group === 'string' && opt.group.trim().length > 0 ? opt.group.trim() : undefined;
         return {
           value: val,
           label: lbl,
           subLabel: sub,
           badge: opt.badge ?? undefined,
+          group: grp,
           icon: opt.icon,
         };
       });
+
+    // Check if any option has a group
+    const hasGroups = mapped.some((opt) => Boolean(opt.group));
+    if (!hasGroups) return mapped;
+
+    // Stable contiguous grouping: group items together
+    // Grouped items sorted by group then label; ungrouped items placed cleanly at the end
+    return mapped.toSorted((a, b) => {
+      if (a.group && !b.group) return -1;
+      if (!a.group && b.group) return 1;
+      if (a.group && b.group && a.group !== b.group) {
+        return a.group.localeCompare(b.group);
+      }
+      return (a.label || '').localeCompare(b.label || '');
+    });
   }, [options]);
 
-  // Safe search query matching
+  // Count items per parent group for clear telemetry in headers
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    normalizedOptions.forEach((opt) => {
+      if (opt.group) {
+        counts.set(opt.group, (counts.get(opt.group) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [normalizedOptions]);
+
+  // Safe search query matching across label, value, group, sublabel, and badge
   const filteredOptions = useMemo(() => {
     if (!search.trim()) return normalizedOptions;
     const q = search.trim().toLowerCase();
     return normalizedOptions.filter((opt) => {
       const labelMatch = String(opt.label || '').toLowerCase().includes(q);
       const valueMatch = String(opt.value || '').toLowerCase().includes(q);
+      const groupMatch = opt.group ? String(opt.group).toLowerCase().includes(q) : false;
       const sub = opt.subLabel || opt.sublabel;
       const subMatch = sub ? String(sub).toLowerCase().includes(q) : false;
       const badgeMatch = opt.badge ? String(opt.badge).toLowerCase().includes(q) : false;
-      return labelMatch || valueMatch || subMatch || badgeMatch;
+      return labelMatch || valueMatch || groupMatch || subMatch || badgeMatch;
     });
   }, [normalizedOptions, search]);
 
@@ -120,7 +151,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
     return () => window.removeEventListener('asopalav:dropdown-open', handleGlobalOpen);
   }, []);
 
-  // When isOpen changes, notify other dropdowns if opening, and focus search
+  // When isOpen changes, compute placement & screen boundary alignment
   const handleToggleOpen = useCallback((openState: boolean) => {
     if (disabled) return;
     if (openState) {
@@ -133,13 +164,21 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           const rect = containerRef.current.getBoundingClientRect();
           const spaceBelow = window.innerHeight - rect.bottom;
           const spaceAbove = rect.top;
-          if (spaceBelow < 250 && spaceAbove > spaceBelow) {
+          if (spaceBelow < 280 && spaceAbove > spaceBelow) {
             setComputedPlacement('top');
           } else {
             setComputedPlacement('bottom');
           }
+
+          // Screen edge boundary detection: prevent horizontal popover clipping
+          if (align === 'right' || rect.left + 290 > window.innerWidth) {
+            setComputedAlign('right');
+          } else {
+            setComputedAlign('left');
+          }
         } else {
           setComputedPlacement('bottom');
+          setComputedAlign(align);
         }
       }
       triggerHaptic('selection');
@@ -148,19 +187,40 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
       );
     }
     setIsOpen(openState);
-  }, [disabled, placement]);
+  }, [disabled, placement, align]);
 
-  // Focus search input when dropdown opens
+  // Focus search input and reset list scroll when dropdown opens
   useEffect(() => {
     if (isOpen) {
       setSearch('');
       setHighlightedIndex(0);
+      if (listRef.current) {
+        listRef.current.scrollTop = 0;
+      }
       const timer = setTimeout(() => {
         searchInputRef.current?.focus();
+        if (listRef.current) {
+          listRef.current.scrollTop = 0;
+        }
       }, 30);
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
+
+  // Auto-scroll highlighted element into view during keyboard navigation
+  useEffect(() => {
+    if (!isOpen || !listRef.current) return;
+    if (highlightedIndex === 0) {
+      listRef.current.scrollTop = 0;
+      return;
+    }
+    const highlightedEl = listRef.current.querySelector(
+      `[data-index="${highlightedIndex}"]`
+    ) as HTMLElement | null;
+    if (highlightedEl) {
+      highlightedEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlightedIndex, isOpen]);
 
   // Close dropdown on outside click (supports mouse, touch, stylus)
   useEffect(() => {
@@ -183,7 +243,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
     };
   }, [isOpen]);
 
-  // Keyboard navigation
+  // Keyboard navigation with smooth cursor tracking
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
 
@@ -294,17 +354,31 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             triggerClassName
           )}
         >
-          <span className="truncate pr-2">
+          <span className="truncate pr-2 flex items-center min-w-0">
             {selectedOption ? (
-              <span className="font-medium text-slate-900 dark:text-white">{selectedOption.label}</span>
+              <span className="flex items-center gap-1.5 truncate">
+                {selectedOption.group && (
+                  <span className="text-[10px] uppercase font-mono tracking-tight text-slate-400 dark:text-[#888888] font-normal shrink-0">
+                    {selectedOption.group} ›
+                  </span>
+                )}
+                <span className="font-semibold text-slate-900 dark:text-white truncate">
+                  {selectedOption.label}
+                </span>
+                {selectedOption.badge && (
+                  <span className="px-1.5 py-0.2 rounded text-[9.5px] font-mono bg-slate-100 dark:bg-[#262626] text-slate-600 dark:text-zinc-400 shrink-0 border border-slate-200/80 dark:border-[#333333]">
+                    {selectedOption.badge}
+                  </span>
+                )}
+              </span>
             ) : value ? (
-              <span className="font-medium text-slate-900 dark:text-white">{String(value)}</span>
+              <span className="font-medium text-slate-900 dark:text-white truncate">{String(value)}</span>
             ) : (
-              <span className="text-slate-400 dark:text-[#707070]">{placeholder}</span>
+              <span className="text-slate-400 dark:text-[#707070] truncate">{placeholder}</span>
             )}
           </span>
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 ml-1">
             {clearable && value && value !== 'ALL' && value !== 'all' && !disabled && (
               <span
                 role="button"
@@ -325,18 +399,19 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           </div>
         </button>
 
-        {/* Dropdown Popup (Solid High Elevation Studio Menu) */}
+        {/* Dropdown Popup (Solid High Elevation Studio Menu with Content-Aware Expansion) */}
         {isOpen && (
           <div
             className={cn(
-              'absolute z-[9999] rounded-[6px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] shadow-2xl overflow-hidden w-full left-0 right-0 animate-in fade-in zoom-in-95 duration-100',
-              computedPlacement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',
-              size === 'sm' ? 'min-w-[120px]' : 'min-w-[200px]',
-              align === 'right' && 'right-0 left-auto',
+              'absolute z-[9999] rounded-[8px] bg-white dark:bg-[#181818] border border-slate-200 dark:border-[#282828] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100',
+              // Sizing: Uncoupled from narrow triggers to prevent aggressive word truncation
+              'w-max min-w-full sm:min-w-[280px] max-w-[min(420px,calc(100vw-24px))]',
+              computedPlacement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
+              computedAlign === 'right' ? 'right-0 left-auto' : 'left-0 right-auto',
               popupClassName
             )}
           >
-            {/* Search Input Box (only shown if more than 5 options) */}
+            {/* Search Input Box */}
             {normalizedOptions.length > 5 && (
               <div className="p-2 border-b border-slate-100 dark:border-[#242424] bg-slate-50 dark:bg-[#141414]">
                 <div className="relative flex items-center">
@@ -353,6 +428,15 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                     placeholder={searchPlaceholder}
                     className="w-full bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-[#707070] text-xs pl-8 pr-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#282828] focus:outline-none focus:border-[#3ecf8e] dark:focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e]/30 transition-colors font-sans min-h-[30px]"
                   />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="absolute right-2 p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -377,71 +461,108 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             )}
 
             {/* Options List */}
-            <div ref={listRef} role="listbox" className="max-h-60 overflow-y-auto p-1 space-y-0.5">
+            <div
+              ref={listRef}
+              role="listbox"
+              className="max-h-[min(320px,50vh)] overflow-y-auto overscroll-contain pb-1"
+            >
               {filteredOptions.length > 0 ? (
                 filteredOptions.map((opt, idx) => {
                   const isSelected = opt.value === String(value ?? '');
                   const isHighlighted = idx === highlightedIndex;
                   const sub = opt.subLabel || opt.sublabel;
+                  const prevOpt = idx > 0 ? filteredOptions[idx - 1] : null;
+                  const showGroupHeader = opt.group && (!prevOpt || prevOpt.group !== opt.group);
 
                   return (
-                    <div
-                      key={`${opt.value}-${idx}`}
-                      role="option"
-                      aria-selected={isSelected}
-                      onClick={() => handleSelect(opt.value)}
-                      onMouseEnter={() => setHighlightedIndex(idx)}
-                      className={cn(
-                        'flex items-center justify-between px-2.5 py-1.5 rounded-[4px] text-xs cursor-pointer transition-colors group select-none font-sans min-h-[30px]',
-                        isSelected
-                          ? 'bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/20'
-                          : isHighlighted
-                          ? 'bg-slate-100 dark:bg-[#222222] text-slate-900 dark:text-white font-medium'
-                          : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#222222] hover:text-slate-900 dark:hover:text-white'
+                    <React.Fragment key={`${opt.value}-${idx}`}>
+                      {showGroupHeader && (
+                        <div className="w-full px-3 py-1.5 text-[10px] font-mono font-bold tracking-wider uppercase text-emerald-800 dark:text-[#3ecf8e] bg-slate-100 dark:bg-[#181818] sticky top-0 z-20 border-b border-slate-200/90 dark:border-[#282828] select-none flex items-center justify-between shadow-2xs">
+                          <span className="flex items-center gap-1.5 truncate pr-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf8e] shrink-0" />
+                            <span className="truncate">{opt.group}</span>
+                          </span>
+                          {groupCounts.has(opt.group!) && (
+                            <span className="text-[9.5px] font-mono px-1.5 py-0.2 rounded-[4px] bg-white dark:bg-black/40 text-slate-500 dark:text-zinc-400 border border-slate-200/60 dark:border-white/5 shrink-0">
+                              {groupCounts.get(opt.group!)} items
+                            </span>
+                          )}
+                        </div>
                       )}
-                    >
-                      <div className="flex items-center gap-2 truncate pr-2 flex-1 min-w-0">
-                        {opt.icon && (
-                          <opt.icon className="w-3.5 h-3.5 text-slate-400 dark:text-[#707070] shrink-0" />
+                      <div
+                        role="option"
+                        data-index={idx}
+                        aria-selected={isSelected}
+                        onClick={() => handleSelect(opt.value)}
+                        onMouseEnter={() => setHighlightedIndex(idx)}
+                        className={cn(
+                          'mx-1 my-0.5 flex items-center justify-between rounded-[4px] text-xs cursor-pointer transition-colors group select-none font-sans min-h-[34px]',
+                          opt.group ? 'pl-5 sm:pl-6 pr-2.5 py-1.5' : 'px-2.5 py-1.5',
+                          isSelected
+                            ? 'bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] font-semibold border border-[#3ecf8e]/25'
+                            : isHighlighted
+                            ? 'bg-slate-100 dark:bg-[#222222] text-slate-900 dark:text-white font-medium'
+                            : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-[#222222] hover:text-slate-900 dark:hover:text-white'
                         )}
-                        <div className="truncate flex-1 min-w-0">
-                          <div className={cn("truncate font-sans", isSelected ? "font-semibold text-emerald-700 dark:text-[#3ecf8e]" : "")}>
-                            {opt.label}
-                          </div>
-                          {sub && (
-                            <div className="text-[10px] text-slate-400 dark:text-[#707070] font-mono truncate">
-                              {sub}
+                      >
+                        <div className="flex items-center gap-2 truncate pr-2 flex-1 min-w-0">
+                          {opt.group && (
+                            <span className="text-slate-400 dark:text-[#555555] text-[11px] font-mono shrink-0 select-none">
+                              ↳
+                            </span>
+                          )}
+                          {opt.icon && (
+                            <opt.icon className="w-3.5 h-3.5 text-slate-400 dark:text-[#707070] shrink-0" />
+                          )}
+                          <div className="truncate flex-1 min-w-0">
+                            <div className={cn("truncate font-sans", isSelected ? "font-semibold text-emerald-700 dark:text-[#3ecf8e]" : "")}>
+                              {opt.label}
                             </div>
+                            {sub && (
+                              <div className="text-[10px] text-slate-400 dark:text-[#707070] font-mono truncate">
+                                {sub}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 ml-1.5">
+                          {opt.badge && (
+                            <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-slate-100 dark:bg-[#242424] text-slate-600 dark:text-[#A1A1A1] border border-slate-200 dark:border-[#303030] whitespace-nowrap font-medium">
+                              {opt.badge}
+                            </span>
+                          )}
+                          {isSelected && (
+                            <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] stroke-[2.5]" />
                           )}
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0 ml-1.5">
-                        {opt.badge && (
-                          <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-slate-100 dark:bg-[#242424] text-slate-600 dark:text-[#A1A1A1] border border-slate-200 dark:border-[#303030] whitespace-nowrap font-medium">
-                            {opt.badge}
-                          </span>
-                        )}
-                        {isSelected && (
-                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] stroke-[2.5]" />
-                        )}
-                      </div>
-                    </div>
+                    </React.Fragment>
                   );
                 })
               ) : (
-                <div className="py-4 px-3 text-center text-xs text-slate-400 dark:text-[#707070] font-sans">
-                  {allowCustom && search.trim() ? (
+                <div className="py-6 px-3 text-center text-xs text-slate-400 dark:text-[#707070] font-sans space-y-2">
+                  <p>No matches found for &ldquo;{search}&rdquo;</p>
+                  {search && (
                     <button
                       type="button"
-                      onClick={() => handleSelect(search.trim())}
-                      className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-[#3ecf8e] hover:underline font-semibold cursor-pointer"
+                      onClick={() => setSearch('')}
+                      className="text-xs text-emerald-600 dark:text-[#3ecf8e] hover:underline cursor-pointer font-medium"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Click to use &ldquo;{search.trim()}&rdquo;</span>
+                      Clear search filter
                     </button>
-                  ) : (
-                    <span>No matches found</span>
+                  )}
+                  {allowCustom && search.trim() && (
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(search.trim())}
+                        className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-[#3ecf8e] hover:underline font-semibold cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Use &ldquo;{search.trim()}&rdquo;</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

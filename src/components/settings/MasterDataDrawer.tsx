@@ -17,6 +17,14 @@ import {
 } from 'lucide-react';
 import { cleanIndianPhoneInput } from '@/lib/utils';
 import { showToast } from '@/components/ui/ToastContainer';
+import {
+  PARENT_CATEGORIES,
+  PARENT_DIVISIONS,
+  getParentCategory,
+  getParentDepartment,
+  setCategoryParent,
+  setDepartmentParent,
+} from '@/lib/hierarchyConfig';
 
 export type MasterDrawerType = 'branch' | 'category' | 'department' | 'courier' | 'user' | 'staff' | 'role';
 
@@ -97,6 +105,16 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
 
       if (record) {
         const { password_hash: _p, lock_pin_hash: _l, studio_password: _s, ...cleanRecord } = record;
+        if (type === 'category') {
+          const parent = record.parent_category || getParentCategory(record.category_name, record.color_theme);
+          cleanRecord.parent_category = parent;
+          cleanRecord.color_theme = parent;
+        }
+        if (type === 'department') {
+          const parent = getParentDepartment(record.department_code || record.department_name);
+          cleanRecord.parent_division_code = record.parent_division_code || parent.code;
+          cleanRecord.parent_division_name = record.parent_division_name || parent.name;
+        }
         setFormData({ ...cleanRecord });
         if (type === 'role' && record.role_code) {
           erpService.getRolePermissions(record.role_code).then((p) => {
@@ -139,7 +157,8 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
           case 'category':
             setFormData({
               category_name: '',
-              color_theme: '',
+              color_theme: PARENT_CATEGORIES[0],
+              parent_category: PARENT_CATEGORIES[0],
               is_active: true,
             });
             break;
@@ -147,6 +166,8 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
             setFormData({
               department_name: '',
               department_code: '',
+              parent_division_code: PARENT_DIVISIONS[0].code,
+              parent_division_name: PARENT_DIVISIONS[0].name,
               is_active: true,
             });
             break;
@@ -359,8 +380,14 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
       if (type === 'branch') {
         await erpService.saveBranch(formData, isEdit, userName, userRole);
       } else if (type === 'category') {
+        const parent = formData.parent_category || formData.color_theme || '-';
+        setCategoryParent(formData.category_name, parent);
+        formData.color_theme = parent;
         await erpService.saveCategory(formData, isEdit, userName, userRole);
       } else if (type === 'department') {
+        if (formData.parent_division_code && formData.parent_division_name) {
+          setDepartmentParent(formData.department_code, formData.parent_division_code, formData.parent_division_name);
+        }
         await erpService.saveDepartment(formData, isEdit, userName, userRole);
       } else if (type === 'courier') {
         await erpService.saveCourier(formData, isEdit, userName, userRole);
@@ -723,7 +750,23 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                   <p className="text-[11px] text-slate-500 dark:text-[#707070]">Additional information (optional)</p>
                 </div>
 
-                <SupabaseFieldRow columnName="color_theme" dataType="varchar" description="Tally Prime Ledger Mapping group">
+                <SupabaseFieldRow columnName="parent_category" dataType="varchar" description="Parent Group for MIS reports & Tally Ledger mapping">
+                  <SearchableSelect
+                    value={formData.parent_category || getParentCategory(formData.category_name, formData.color_theme)}
+                    onChange={(val) => {
+                      handleChange('parent_category', val);
+                      handleChange('color_theme', val);
+                    }}
+                    options={PARENT_CATEGORIES.map((cat) => ({
+                      value: cat,
+                      label: cat,
+                    }))}
+                    placeholder="Select parent category..."
+                    allowCustom={false}
+                  />
+                </SupabaseFieldRow>
+
+                <SupabaseFieldRow columnName="color_theme" dataType="varchar" description="Tally Prime Ledger Mapping group (Alias)">
                   <input
                     type="text"
                     value={formData.color_theme || ''}
@@ -786,9 +829,29 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
 
                 {/* Optional Fields Divider */}
                 <div className="pt-4 pb-1 border-t border-slate-200 dark:border-[#262626] space-y-0.5">
-                  <h4 className="text-xs font-semibold text-slate-900 dark:text-white">Optional Details</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-[#707070]">Additional information (optional)</p>
+                  <h4 className="text-xs font-semibold text-slate-900 dark:text-white">Cost Center Hierarchy</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-[#707070]">Parent Division for showroom MIS rollup</p>
                 </div>
+
+                <SupabaseFieldRow columnName="parent_division" dataType="varchar" description="Parent Showroom Division">
+                  <SearchableSelect
+                    value={formData.parent_division_code || getParentDepartment(formData.department_code || formData.department_name).code}
+                    onChange={(val) => {
+                      const div = PARENT_DIVISIONS.find((d) => d.code === val);
+                      if (div) {
+                        handleChange('parent_division_code', div.code);
+                        handleChange('parent_division_name', div.name);
+                      }
+                    }}
+                    options={PARENT_DIVISIONS.map((div) => ({
+                      value: div.code,
+                      label: `${div.name} (${div.code})`,
+                      badge: div.code,
+                    }))}
+                    placeholder="Select parent division..."
+                    allowCustom={false}
+                  />
+                </SupabaseFieldRow>
 
                 <SupabaseFieldRow columnName="is_active" dataType="boolean">
                   <label className="flex items-center gap-2 cursor-pointer select-none py-1">
@@ -1026,6 +1089,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                 >
                   <input
                     type="password"
+                    autoComplete={isEdit ? 'current-password' : 'new-password'}
                     required={!isEdit}
                     value={formData.password_hash || ''}
                     onChange={(e) => handleChange('password_hash', e.target.value)}
@@ -1063,6 +1127,7 @@ export const MasterDataDrawer: React.FC<MasterDrawerProps> = ({
                 <SupabaseFieldRow columnName="lock_pin_hash" dataType="varchar" description="4-Digit Fast Screen Lock PIN">
                   <input
                     type="password"
+                    autoComplete="new-password"
                     maxLength={4}
                     value={formData.lock_pin_hash || ''}
                     onChange={(e) => handleChange('lock_pin_hash', e.target.value.replace(/[^0-9]/g, ''))}

@@ -279,48 +279,6 @@ export const AuditLogPage: React.FC = () => {
     return filteredLogs.slice(start, start + pageSize);
   }, [filteredLogs, currentPage, pageSize]);
 
-  // Export to CSV
-  const handleExportCSV = () => {
-    triggerHaptic('medium');
-    const headers = [
-      'Audit ID',
-      'Date & Time',
-      'Operator',
-      'Role',
-      'Action Type',
-      'Target Entity',
-      'Target Identifier',
-      'Event Description',
-      'Reason / Justification',
-      'IP Address',
-      'Cryptographic Signature',
-    ];
-
-    const rows = filteredLogs.map((l) => [
-      `"${l.audit_number || ''}"`,
-      `"${formatDate(l.created_at, 'yyyy-MM-dd HH:mm:ss')}"`,
-      `"${(l.user_name || '').replace(/"/g, '""')}"`,
-      `"${l.user_role || ''}"`,
-      `"${l.action_type || ''}"`,
-      `"${l.target_entity || ''}"`,
-      `"${(l.target_identifier || '').replace(/"/g, '""')}"`,
-      `"${(l.event_description || '').replace(/"/g, '""')}"`,
-      `"${(l.justification || '').replace(/"/g, '""')}"`,
-      `"${l.ip_address || ''}"`,
-      `"${l.tamper_proof_signature || ''}"`,
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const filename = `asopalav_audit_log_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`;
-    downloadCSV(filename, csvContent);
-
-    showToast({
-      type: 'success',
-      title: 'Export Complete',
-      message: `Exported ${filteredLogs.length} audit records to ${filename}`,
-    });
-  };
-
   // Strictly enforce Developer / Super Admin access
   if (!isPrivileged) {
     return (
@@ -367,16 +325,6 @@ export const AuditLogPage: React.FC = () => {
             >
               <RefreshCw className={cn('w-3.5 h-3.5 text-slate-500', isRefreshing && 'animate-spin text-[#3ecf8e]')} />
               <span>{isRefreshing ? 'Syncing...' : 'Refresh'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleExportCSV}
-              disabled={filteredLogs.length === 0}
-              className="h-9 px-3.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-white dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#ededed] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
-            >
-              <Download className="w-3.5 h-3.5 text-[#3ecf8e]" />
-              <span>Export CSV</span>
             </button>
           </div>
         </div>

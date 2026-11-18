@@ -259,7 +259,7 @@ export class GlobalSearchEngine {
           category: 'vouchers',
           categoryLabel: 'Expense Voucher',
           title: `Voucher #${formatVoucherNumber(v.voucher_number)} • ${v.recipient_name}`,
-          subtitle: `${v.category_name} · ${v.department_name || 'Counter'} · ${v.payment_method === 'Physical_Cash' ? 'Cash Drawer' : 'Online UPI'} · By ${v.created_by_name}`,
+          subtitle: `${v.category_name} · ${v.department_name || 'Counter'} · ${v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'} · By ${v.created_by_name}`,
           badge: {
             text: v.status || 'Approved',
             variant: v.status === 'Voided' ? 'rose' : 'emerald',
@@ -436,8 +436,8 @@ export class GlobalSearchEngine {
 
     // 5. INDEX: System Actions & Page Shortcuts
     const systemActions: { title: string; subtitle: string; page: string; hotkey?: string; tags: string[] }[] = [
-      { title: 'Add New Expense', subtitle: 'Pay cash or online UPI payment', page: 'new-voucher', hotkey: 'F2', tags: ['create', 'new', 'voucher', 'expense', 'bill', 'pay', 'invoice'] },
-      { title: 'Cash Drawer & UPI', subtitle: 'Cash in box, UPI balance & drawer passbook', page: 'treasury', hotkey: 'F4', tags: ['float', 'till', 'cash in hand', 'drawer', 'treasury', 'box'] },
+      { title: 'Add New Expense', subtitle: 'Pay with Cash or UPI', page: 'new-voucher', hotkey: 'F2', tags: ['create', 'new', 'voucher', 'expense', 'bill', 'pay', 'invoice'] },
+      { title: 'Cash Drawer & UPI', subtitle: 'Cash in drawer, UPI balance & passbook', page: 'treasury', hotkey: 'F4', tags: ['float', 'till', 'cash in hand', 'drawer', 'treasury', 'box'] },
       { title: 'Staff Advances', subtitle: 'Give and clear staff money advances', page: 'advances', hotkey: 'F7', tags: ['advance', 'iou', 'salary', 'staff loan', 'reimbursement'] },
       { title: 'Financial Reports', subtitle: 'Tally Prime export, staff advances, CA & audit pack', page: 'reports', hotkey: 'Reports', tags: ['reports', 'tally', 'export', 'ca', 'auditor', 'chartered accountant', 'statement', 'tax', '40a3'] },
       { title: 'All Expenses', subtitle: 'View and search all past bills & expenses', page: 'expenses', hotkey: 'F3', tags: ['ledger', 'register', 'table', 'export', 'csv', 'audit', 'bills'] },

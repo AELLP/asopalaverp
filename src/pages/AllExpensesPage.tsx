@@ -6,7 +6,7 @@ import { useBranchStore } from '@/store/branchStore';
 import { useVouchers } from '@/hooks/useVouchers';
 import { VoucherTable } from '@/components/vouchers/VoucherTable';
 import { DateRange } from '@/components/ui/DateRangePicker';
-import { formatINR, formatCompactINR, cn, triggerHaptic } from '@/lib/utils';
+import { formatINR, formatCompactINR, normalizeDateToYMD, cn, triggerHaptic } from '@/lib/utils';
 import { showToast } from '@/components/ui/ToastContainer';
 import {  Plus,
   Receipt,
@@ -40,7 +40,7 @@ export const AllExpensesPage: React.FC = () => {
   const activeValidVouchers = useMemo(() => {
     return vouchers.filter((v) => {
       const rawDate = v.payment_date || v.created_at || '';
-      const vDate = rawDate.trim().slice(0, 10);
+      const vDate = normalizeDateToYMD(rawDate);
       if (dateRange.startDate && vDate < dateRange.startDate) return false;
       if (dateRange.endDate && vDate > dateRange.endDate) return false;
       return (
@@ -175,7 +175,7 @@ export const AllExpensesPage: React.FC = () => {
             <MetricCard
               label="Cash Vouchers"
               value={String(cashBillsCount)}
-              subValue="Physical cash counter slips"
+              subValue="Cash counter slips"
               badge="CASH"
               badgeColor="neutral"
               statusDotColor="#f59e0b"

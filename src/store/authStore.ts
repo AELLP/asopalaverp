@@ -343,7 +343,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       };
 
       if (target) {
-        const targetPin = customPins[target.id] || target.lock_pin_hash || (target as any).pin;
+        const targetPin = customPins[target.id] || target.lock_pin_hash;
         if (verifyPin(pin, targetPin)) {
           set({ user: target, isLocked: false });
           get().loadPermissions(target.role_code);
@@ -398,7 +398,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
       if (targetUserId) {
         const target = availableCashiers.find((c) => c.id === targetUserId);
         if (target) {
-          const targetPin = customPins[target.id] || target.lock_pin_hash || (target as any).pin;
+          const targetPin = customPins[target.id] || target.lock_pin_hash;
           if (verifyPin(pin, targetPin)) {
             const switchTime = Date.now();
             set({ user: target, selectedCashier: target, isLocked: false });
@@ -539,21 +539,23 @@ export const useAuthStore = create<AuthState>((set, get) => {
     getAllowedBranches: (allBranches: Branch[]) => {
       const { user, can } = get();
       const list = allBranches && allBranches.length > 0 ? allBranches : DEFAULT_BRANCHES;
-      if (!user) return [list[0]];
+      const activeList = list.filter((b) => b.is_active !== false);
+      const safeList = activeList.length > 0 ? activeList : [DEFAULT_BRANCHES[0]];
+      if (!user) return [safeList[0]];
       const isSuper = isPrivilegedAdminRole(user.role_code) || can('can_view_all_branches');
-      if (isSuper) return list;
+      if (isSuper) return safeList;
 
       const assigned = user.assigned_branches && user.assigned_branches.length > 0
         ? user.assigned_branches
         : ['Aellp-ASI'];
 
-      const filtered = list.filter((b) => {
+      const filtered = safeList.filter((b) => {
         const bCode = normalizeBranchCode(b.branch_code || b.branch_id);
         return assigned.some(
           (ub) => ub === b.branch_id || normalizeBranchCode(ub) === bCode
         );
       });
-      return filtered.length > 0 ? filtered : [list[0]];
+      return filtered.length > 0 ? filtered : [safeList[0]];
     },
 
     verifySessionIntegrity: async () => {

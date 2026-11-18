@@ -2,31 +2,48 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { format, startOfWeek, startOfMonth, startOfQuarter, subDays, subMonths } from 'date-fns';
 import { useAuthStore } from '@/store/authStore';
 import { useBranchStore } from '@/store/branchStore';
+import { useVoucherStore } from '@/store/voucherStore';
 import { useVouchers } from '@/hooks/useVouchers';
 import { erpService } from '@/lib/erpService';
 import { calculateDailyCashBalances } from '@/lib/dailyCashBalance';
-import { WalletLedger, VoucherSplit } from '@/types/database';
+import { WalletLedger, VoucherSplit, StaffAdvance } from '@/types/database';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
-import { formatINR, cn, triggerHaptic } from '@/lib/utils';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import { formatINR, formatCompactINR, normalizeDateToYMD, cn, triggerHaptic } from '@/lib/utils';
 import { showToast } from '@/components/ui/ToastContainer';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 import {
   FileSpreadsheet,
   Download,
-  Search,  Wallet,
+  Search,
+  Wallet,
   RefreshCw,
-  Copy,  Building2,
+  Copy,
+  Building2,
   Receipt,
   Check,
   CalendarDays,
-  Coins,  TrendingUp,
+  Coins,
+  TrendingUp,
+  Smartphone,
   Lock,
-  Printer,  Split,
+  Printer,
+  Split,
   Users,
   Layers,
-  PieChart,} from 'lucide-react';
+  Tags,
+  PieChart,
+  HandCoins,
+} from 'lucide-react';
 
-type ReportTab = 'daily_cash' | 'cost_centers' | 'tally' | 'eod_closings';
+type ReportTab =
+  | 'daily_cash'
+  | 'vouchers_register'
+  | 'payroll_advances'
+  | 'cost_centers'
+  | 'tally'
+  | 'eod_closings';
 type TimeRangePreset =
   | 'today'
   | 'yesterday'
@@ -64,14 +81,31 @@ export const ReportsPage: React.FC = () => {
   const [selectedMode, setSelectedMode] = useState<'ALL' | 'Physical_Cash' | 'Online_UPI'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>(selectedBranchId || 'ALL');
+  const vouchersByBranch = useVoucherStore((s) => s.vouchers);
+
+  // Auto-fetch branch vouchers when filter changes
+  useEffect(() => {
+    useVoucherStore.getState().fetchVouchers(selectedBranchFilter);
+  }, [selectedBranchFilter]);
+
+  const activeVouchersList = useMemo(() => {
+    return vouchersByBranch[selectedBranchFilter] || vouchersByBranch['ALL'] || vouchers;
+  }, [vouchersByBranch, selectedBranchFilter, vouchers]);
 
   // Supplementary data states
   const [ledgerEntries, setLedgerEntries] = useState<WalletLedger[]>([]);
   const [eodLocks, setEodLocks] = useState<any[]>([]);
+  const [advances, setAdvances] = useState<StaffAdvance[]>([]);
   const [splitsMap, setSplitsMap] = useState<Record<string, VoucherSplit[]>>({});
   const [tallyViewMode, setTallyViewMode] = useState<'itemized' | 'summary'>('itemized');
   const [loadingExtras, setLoadingExtras] = useState(false);
+  const [copiedDailyCash, setCopiedDailyCash] = useState(false);
+  const [copiedVouchers, setCopiedVouchers] = useState(false);
+  const [copiedPayroll, setCopiedPayroll] = useState(false);
+  const [copiedCostCenters, setCopiedCostCenters] = useState(false);
   const [copiedTally, setCopiedTally] = useState(false);
+  const [copiedEod, setCopiedEod] = useState(false);
+  const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
   // Sync selected branch filter if topbar branch changes
   useEffect(() => {
@@ -80,6 +114,18 @@ export const ReportsPage: React.FC = () => {
     }
   }, [selectedBranchId]);
 
+  // Listen to hierarchy changes (e.g., category parent moves) to immediately update reports
+  useEffect(() => {
+    const handleHierarchyUpdate = () => {
+      setHierarchyRevision((v) => v + 1);
+      refreshVouchers();
+    };
+    window.addEventListener('asopalav:hierarchy-updated', handleHierarchyUpdate);
+    return () => {
+      window.removeEventListener('asopalav:hierarchy-updated', handleHierarchyUpdate);
+    };
+  }, [refreshVouchers]);
+
   // Current physical cash in branch wallet
   const currentBranchCash = useMemo(() => {
     const targetKey = selectedBranchFilter === 'ALL' ? 'ALL' : selectedBranchFilter;
@@ -87,19 +133,21 @@ export const ReportsPage: React.FC = () => {
     return w ? Number(w.cash_balance) || 100000 : 100000;
   }, [wallets, selectedBranchFilter]);
 
-  // Load wallet ledger and EOD till closing locks
+  // Load wallet ledger, EOD till closing locks, and staff advances
   const loadExtras = useCallback(async () => {
     setLoadingExtras(true);
     try {
       const branchToQuery = selectedBranchFilter === 'ALL' ? undefined : selectedBranchFilter;
-      const [ledgerData, locksData] = await Promise.all([
+      const [ledgerData, locksData, advancesData] = await Promise.all([
         erpService.getWalletLedger(branchToQuery),
         erpService.getAllEodTillLocks(branchToQuery),
+        erpService.getStaffAdvances(branchToQuery),
       ]);
-      setLedgerEntries(ledgerData);
-      setEodLocks(locksData);
+      setLedgerEntries(ledgerData || []);
+      setEodLocks(locksData || []);
+      setAdvances(advancesData || []);
     } catch (err) {
-      console.warn('Error loading ledger / lock data:', err);
+      console.warn('Error loading ledger / lock / advance data:', err);
     } finally {
       setLoadingExtras(false);
     }
@@ -165,13 +213,14 @@ export const ReportsPage: React.FC = () => {
       ledgerEntries,
       currentBranchCash,
       dateBounds.start !== '1970-01-01' ? dateBounds.start : undefined,
-      dateBounds.end !== '2099-12-31' ? dateBounds.end : undefined
+      dateBounds.end !== '2099-12-31' ? dateBounds.end : undefined,
+      activeVouchersList
     );
-  }, [ledgerEntries, currentBranchCash, dateBounds]);
+  }, [ledgerEntries, currentBranchCash, dateBounds, activeVouchersList]);
 
   // Filtered Expense Vouchers
   const filteredVouchers = useMemo(() => {
-    return vouchers.filter((v) => {
+    return activeVouchersList.filter((v) => {
       // 1. Branch filter
       if (selectedBranchFilter !== 'ALL') {
         const branchMatch =
@@ -186,7 +235,7 @@ export const ReportsPage: React.FC = () => {
 
       // 2. Date filter
       const rawDate = v.payment_date || v.created_at || '';
-      const vDate = rawDate.trim().slice(0, 10);
+      const vDate = normalizeDateToYMD(rawDate);
       if (dateBounds.start && vDate && vDate < dateBounds.start) {
         return false;
       }
@@ -222,12 +271,103 @@ export const ReportsPage: React.FC = () => {
 
       return true;
     });
-  }, [vouchers, selectedBranchFilter, dateBounds, selectedMode, searchQuery]);
+  }, [activeVouchersList, selectedBranchFilter, dateBounds, selectedMode, searchQuery]);
 
-  // Active Approved Vouchers (Excluding Voided)
+  // Active Approved Vouchers (Excluding Voided & Pending & Advance Settlements)
   const approvedVouchers = useMemo(() => {
-    return filteredVouchers.filter((v) => v.status !== 'Voided');
+    return filteredVouchers.filter(
+      (v) =>
+        v.status !== 'Voided' &&
+        v.status !== 'Pending_Approval' &&
+        v.payment_type !== 'Advance_Settlement'
+    );
   }, [filteredVouchers]);
+
+  // Consolidated breakdown of filtered approved vouchers (Cash vs UPI vs Total)
+  const voucherSummary = useMemo(() => {
+    let total = 0;
+    let cash = 0;
+    let upi = 0;
+    approvedVouchers.forEach((v) => {
+      const amt = Number(v.total_amount) || 0;
+      total += amt;
+      if (v.payment_method === 'Physical_Cash') cash += amt;
+      else if (v.payment_method === 'Online_UPI') upi += amt;
+    });
+    return {
+      total,
+      cash,
+      upi,
+      count: approvedVouchers.length,
+      cashCount: approvedVouchers.filter((v) => v.payment_method === 'Physical_Cash').length,
+      upiCount: approvedVouchers.filter((v) => v.payment_method === 'Online_UPI').length,
+    };
+  }, [approvedVouchers]);
+
+  // Filtered Staff Advances & Payroll Deductions
+  const filteredAdvances = useMemo(() => {
+    return advances.filter((a) => {
+      // 1. Branch filter
+      if (selectedBranchFilter !== 'ALL') {
+        const bCode = a.branch_code || (a.branch_id ? a.branch_id.replace(/^Aellp-/, '') : '');
+        const filterCode = selectedBranchFilter.replace(/^Aellp-/, '');
+        if (a.branch_id !== selectedBranchFilter && bCode !== filterCode) return false;
+      }
+
+      // 2. Date filter
+      const rawDate = a.advance_date || a.created_at || '';
+      const aDate = normalizeDateToYMD(rawDate);
+      if (dateBounds.start && aDate && aDate < dateBounds.start) return false;
+      if (dateBounds.end && aDate && aDate > dateBounds.end) return false;
+
+      // 3. Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const name = (a.staff_name || '').toLowerCase();
+        const code = (a.staff_code || '').toLowerCase();
+        const receipt = (a.receipt_number || '').toLowerCase();
+        const dept = (a.department_name || '').toLowerCase();
+        const purpose = (a.purpose || '').toLowerCase();
+        if (
+          !name.includes(q) &&
+          !code.includes(q) &&
+          !receipt.includes(q) &&
+          !dept.includes(q) &&
+          !purpose.includes(q)
+        ) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [advances, selectedBranchFilter, dateBounds, searchQuery]);
+
+  // Staff Advances Summary Metrics
+  const advancesSummary = useMemo(() => {
+    let totalDisbursed = 0;
+    let totalRecovered = 0;
+    let totalDue = 0;
+    let activeDueCount = 0;
+
+    filteredAdvances.forEach((a) => {
+      const adv = Number(a.advance_amount) || 0;
+      const rec = (Number(a.bills_submitted_amount) || 0) + (Number(a.cash_returned_amount) || 0);
+      const due = Number(a.unsettled_balance) || 0;
+      totalDisbursed += adv;
+      totalRecovered += rec;
+      totalDue += due;
+      if (due > 0) activeDueCount++;
+    });
+
+    return {
+      totalCount: filteredAdvances.length,
+      activeDueCount,
+      totalDisbursed,
+      totalRecovered,
+      totalDue,
+    };
+  }, [filteredAdvances]);
 
   // Automatically load line-level split items for any multi-employee split vouchers in view
   useEffect(() => {
@@ -259,11 +399,28 @@ export const ReportsPage: React.FC = () => {
   const costCenterReportData = useMemo(() => {
     const deptMap = new Map<string, {
       name: string;
+      parentDivision: string;
+      parentDivisionCode: string;
       amount: number;
       count: number;
       cashAmount: number;
       upiAmount: number;
       vendors: Map<string, { count: number; amount: number }>;
+    }>();
+
+    const divisionMap = new Map<string, {
+      code: string;
+      name: string;
+      amount: number;
+      count: number;
+      childDepts: Map<string, number>;
+    }>();
+
+    const parentCatMap = new Map<string, {
+      name: string;
+      amount: number;
+      count: number;
+      childCats: Map<string, number>;
     }>();
 
     const vendorMap = new Map<string, {
@@ -278,6 +435,72 @@ export const ReportsPage: React.FC = () => {
 
     let totalAllocatedSpend = 0;
 
+    const processItem = (dept: string, cat: string, payee: string, amt: number, isCash: boolean) => {
+      totalAllocatedSpend += amt;
+      const parentDiv = getParentDepartment(dept);
+      const parentCat = getParentCategory(cat);
+
+      // 1. Division rollup
+      const div = divisionMap.get(parentDiv.code) || {
+        code: parentDiv.code,
+        name: parentDiv.name,
+        amount: 0,
+        count: 0,
+        childDepts: new Map(),
+      };
+      div.amount += amt;
+      div.count += 1;
+      div.childDepts.set(dept, (div.childDepts.get(dept) || 0) + amt);
+      divisionMap.set(parentDiv.code, div);
+
+      // 2. Parent Category rollup
+      const pCat = parentCatMap.get(parentCat) || {
+        name: parentCat,
+        amount: 0,
+        count: 0,
+        childCats: new Map(),
+      };
+      pCat.amount += amt;
+      pCat.count += 1;
+      pCat.childCats.set(cat, (pCat.childCats.get(cat) || 0) + amt);
+      parentCatMap.set(parentCat, pCat);
+
+      // 3. Child Department
+      const d = deptMap.get(dept) || {
+        name: dept,
+        parentDivision: parentDiv.name,
+        parentDivisionCode: parentDiv.code,
+        amount: 0,
+        count: 0,
+        cashAmount: 0,
+        upiAmount: 0,
+        vendors: new Map(),
+      };
+      d.amount += amt;
+      d.count += 1;
+      if (isCash) d.cashAmount += amt; else d.upiAmount += amt;
+      const vEntry = d.vendors.get(payee) || { count: 0, amount: 0 };
+      vEntry.count += 1;
+      vEntry.amount += amt;
+      d.vendors.set(payee, vEntry);
+      deptMap.set(dept, d);
+
+      // 4. Vendor
+      const vend = vendorMap.get(payee) || {
+        name: payee,
+        amount: 0,
+        count: 0,
+        cashAmount: 0,
+        upiAmount: 0,
+        primaryDept: dept,
+        primaryCat: (cat === 'Advance Salary' || cat === 'Staff Adv for Exps') ? `${cat} (Staff Advance)` : cat,
+      };
+      vend.amount += amt;
+      vend.count += 1;
+      if (isCash) vend.cashAmount += amt; else vend.upiAmount += amt;
+      vendorMap.set(payee, vend);
+    };
+
     approvedVouchers
       .filter((v) => v.payment_type !== 'Advance_Settlement')
       .forEach((v) => {
@@ -290,81 +513,16 @@ export const ReportsPage: React.FC = () => {
             const cat = s.categoryName || v.category_name || 'Operational Expense';
             const payee = s.staffName ? `${s.staffName}${s.staffCode ? ` (${s.staffCode})` : ''}` : (v.recipient_name || 'Unknown');
             const amt = Number(s.amount) || 0;
-            totalAllocatedSpend += amt;
-
-            // Department
-            const d = deptMap.get(dept) || {
-              name: dept,
-              amount: 0,
-              count: 0,
-              cashAmount: 0,
-              upiAmount: 0,
-              vendors: new Map(),
-            };
-            d.amount += amt;
-            d.count += 1;
-            if (isCash) d.cashAmount += amt; else d.upiAmount += amt;
-            const vEntry = d.vendors.get(payee) || { count: 0, amount: 0 };
-            vEntry.count += 1;
-            vEntry.amount += amt;
-            d.vendors.set(payee, vEntry);
-            deptMap.set(dept, d);
-
-            // Vendor
-            const vend = vendorMap.get(payee) || {
-              name: payee,
-              amount: 0,
-              count: 0,
-              cashAmount: 0,
-              upiAmount: 0,
-              primaryDept: dept,
-              primaryCat: (cat === 'Advance Salary' || cat === 'Staff Adv for Exps') ? `${cat} (Staff Advance)` : cat,
-            };
-            vend.amount += amt;
-            vend.count += 1;
-            if (isCash) vend.cashAmount += amt; else vend.upiAmount += amt;
-            vendorMap.set(payee, vend);
+            processItem(dept, cat, payee, amt, isCash);
           });
           return;
         }
 
-        // Standard Single Voucher
         const dept = v.department_name || 'General Operations';
         const cat = v.category_name || 'Operational Expense';
         const payee = v.recipient_name || 'Unknown';
         const amt = Number(v.total_amount) || 0;
-        totalAllocatedSpend += amt;
-
-        const d = deptMap.get(dept) || {
-          name: dept,
-          amount: 0,
-          count: 0,
-          cashAmount: 0,
-          upiAmount: 0,
-          vendors: new Map(),
-        };
-        d.amount += amt;
-        d.count += 1;
-        if (isCash) d.cashAmount += amt; else d.upiAmount += amt;
-        const vEntry = d.vendors.get(payee) || { count: 0, amount: 0 };
-        vEntry.count += 1;
-        vEntry.amount += amt;
-        d.vendors.set(payee, vEntry);
-        deptMap.set(dept, d);
-
-        const vend = vendorMap.get(payee) || {
-          name: payee,
-          amount: 0,
-          count: 0,
-          cashAmount: 0,
-          upiAmount: 0,
-          primaryDept: dept,
-          primaryCat: cat,
-        };
-        vend.amount += amt;
-        vend.count += 1;
-        if (isCash) vend.cashAmount += amt; else vend.upiAmount += amt;
-        vendorMap.set(payee, vend);
+        processItem(dept, cat, payee, amt, isCash);
       });
 
     // Format Departments list
@@ -380,6 +538,8 @@ export const ReportsPage: React.FC = () => {
 
       return {
         name: d.name,
+        parentDivision: d.parentDivision,
+        parentDivisionCode: d.parentDivisionCode,
         amount: d.amount,
         count: d.count,
         cashAmount: d.cashAmount,
@@ -388,6 +548,41 @@ export const ReportsPage: React.FC = () => {
         avgTicket: d.count > 0 ? Math.round(d.amount / d.count) : 0,
         primaryVendor: topVendorName,
         primaryVendorAmount: topVendorAmt,
+      };
+    }).sort((a, b) => b.amount - a.amount);
+
+    // Format Parent Divisions list
+    const parentDivisions = Array.from(divisionMap.values()).map((div) => {
+      const children = Array.from(div.childDepts.entries()).map(([name, amt]) => ({
+        name,
+        amount: amt,
+        percentage: div.amount > 0 ? Math.round((amt / div.amount) * 1000) / 10 : 0,
+      })).sort((a, b) => b.amount - a.amount);
+
+      return {
+        code: div.code,
+        name: div.name,
+        amount: div.amount,
+        count: div.count,
+        percentage: totalAllocatedSpend > 0 ? Math.round((div.amount / totalAllocatedSpend) * 1000) / 10 : 0,
+        childDepts: children,
+      };
+    }).sort((a, b) => b.amount - a.amount);
+
+    // Format Parent Categories list
+    const parentCategories = Array.from(parentCatMap.values()).map((pc) => {
+      const children = Array.from(pc.childCats.entries()).map(([name, amt]) => ({
+        name,
+        amount: amt,
+        percentage: pc.amount > 0 ? Math.round((amt / pc.amount) * 1000) / 10 : 0,
+      })).sort((a, b) => b.amount - a.amount);
+
+      return {
+        name: pc.name,
+        amount: pc.amount,
+        count: pc.count,
+        percentage: totalAllocatedSpend > 0 ? Math.round((pc.amount / totalAllocatedSpend) * 1000) / 10 : 0,
+        childCats: children,
       };
     }).sort((a, b) => b.amount - a.amount);
 
@@ -404,14 +599,345 @@ export const ReportsPage: React.FC = () => {
     return {
       departments,
       vendors,
+      parentDivisions,
+      parentCategories,
       totalAllocatedSpend,
       totalDeptsCount: departments.length,
       totalVendorsCount: vendors.length,
       top3Ratio,
     };
-  }, [approvedVouchers, splitsMap]);
+  }, [approvedVouchers, splitsMap, hierarchyRevision]);
 
-  // Cost Centers & Vendors Full CSV Export
+  // Unified Clipboard Copy Utility for Instant Excel / Google Sheets Pasting (TSV)
+  const copyTableToClipboard = (
+    headers: string[],
+    rows: (string | number)[][],
+    successToastMsg: string,
+    stateSetter: (v: boolean) => void
+  ) => {
+    triggerHaptic();
+    const tsv = [
+      headers.join('\t'),
+      ...rows.map((r) => r.map((c) => String(c ?? '').replace(/[\t\n\r]/g, ' ')).join('\t')),
+    ].join('\n');
+
+    const fallbackCopy = () => {
+      const ta = document.createElement('textarea');
+      ta.value = tsv;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try {
+        document.execCommand('copy');
+        stateSetter(true);
+        setTimeout(() => stateSetter(false), 2500);
+        showToast({ type: 'success', title: 'Rows Copied', message: successToastMsg });
+      } catch {
+        showToast({ type: 'error', title: 'Copy Failed', message: 'Could not access clipboard' });
+      } finally {
+        document.body.removeChild(ta);
+      }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(tsv)
+        .then(() => {
+          stateSetter(true);
+          setTimeout(() => stateSetter(false), 2500);
+          showToast({ type: 'success', title: 'Rows Copied', message: successToastMsg });
+        })
+        .catch(() => fallbackCopy());
+    } else {
+      fallbackCopy();
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // CENTRALIZED EXPORT GENERATORS & CLIPBOARD HANDLERS
+  // --------------------------------------------------------------------------
+
+  // 1. Daily Cash Statement CSV Export
+  const handleExportDailyCashStatement = () => {
+    triggerHaptic();
+    const headers = [
+      'Date',
+      'Calendar Day',
+      'Opening Cash (INR)',
+      'Cash Inflows (+) Float (INR)',
+      'Cash Outflows (-) Expenses (INR)',
+      'Net Movement (INR)',
+      'Closing Cash (INR)',
+      'Transaction Count',
+      'Status',
+    ];
+
+    const rows = dailyCashFlow.days.map((d) => [
+      `"${d.date}"`,
+      `"${d.displayDate}"`,
+      Number(d.opening) || 0,
+      Number(d.inflow) || 0,
+      Number(d.outflow) || 0,
+      Number(d.net) || 0,
+      Number(d.closing) || 0,
+      d.count,
+      `"Balanced"`,
+    ]);
+
+    const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    downloadBlob(
+      `Daily_Cash_Statement_${selectedBranchFilter}_${dateBounds.start}_to_${dateBounds.end}.csv`,
+      csv
+    );
+    showToast({
+      type: 'success',
+      title: 'Cash Statement Exported',
+      message: 'Downloaded verified daily opening and closing cash statement.',
+    });
+  };
+
+  // Copy Daily Cash Statement to Clipboard
+  const handleCopyDailyCash = () => {
+    const headers = [
+      'Date',
+      'Calendar Day',
+      'Opening Cash (INR)',
+      'Cash Added (+) (INR)',
+      'Cash Spent (-) (INR)',
+      'Net Change (INR)',
+      'Closing Cash (INR)',
+      'Transaction Count',
+      'Status',
+    ];
+
+    const rows = dailyCashFlow.days.map((d) => [
+      d.date,
+      d.displayDate,
+      Number(d.opening) || 0,
+      Number(d.inflow) || 0,
+      Number(d.outflow) || 0,
+      Number(d.net) || 0,
+      Number(d.closing) || 0,
+      d.count,
+      'Balanced',
+    ]);
+
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} cash statement rows. Ready to paste into Excel!`,
+      setCopiedDailyCash
+    );
+  };
+
+  // 2. Expense Vouchers Register CSV Export
+  const handleExportVouchersRegisterCSV = () => {
+    triggerHaptic();
+    const headers = [
+      'Voucher No',
+      'Date',
+      'Showroom',
+      'Category Name',
+      'Parent Group',
+      'Cost Center / Department',
+      'Recipient / Payee',
+      'Bill / Invoice No',
+      'Payment Mode',
+      'Gross Amount (INR)',
+      'Status',
+      'Remarks / Narration',
+      'Staff Code',
+    ];
+
+    const rows = approvedVouchers.map((v) => {
+      const vDate = v.payment_date ? v.payment_date.slice(0, 10) : '';
+      const bCode = v.branch_code || (v.branch_id ? v.branch_id.replace(/^Aellp-/, '') : 'ASI');
+      const cat = v.category_name || 'General Expense';
+      const parentCat = getParentCategory(cat);
+      const dept = v.department_name || 'General Operations';
+      const payee = (v.recipient_name || '').replace(/"/g, '""');
+      const bill = (v.bill_number || '').replace(/"/g, '""');
+      const mode = v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI';
+      const amt = Number(v.total_amount) || 0;
+      const status = v.status || 'Approved';
+      const remarks = (v.remarks || '').replace(/"/g, '""');
+      const staff = (v.requested_by_staff_code || '').replace(/"/g, '""');
+
+      return [
+        `"${v.voucher_number || ''}"`,
+        `"${vDate}"`,
+        `"${bCode}"`,
+        `"${cat.replace(/"/g, '""')}"`,
+        `"${parentCat.replace(/"/g, '""')}"`,
+        `"${dept.replace(/"/g, '""')}"`,
+        `"${payee}"`,
+        `"${bill}"`,
+        `"${mode}"`,
+        amt,
+        `"${status}"`,
+        `"${remarks}"`,
+        `"${staff}"`,
+      ].join(',');
+    });
+
+    const csv = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    downloadBlob(
+      `Asopalav_Expense_Vouchers_Register_${selectedBranchFilter}_${dateBounds.start}_to_${dateBounds.end}.csv`,
+      csv
+    );
+    showToast({
+      type: 'success',
+      title: 'Vouchers Register Exported',
+      message: `Exported ${rows.length} expense vouchers to CSV with full parent-child hierarchy.`,
+    });
+  };
+
+  // Copy Expense Vouchers Register to Clipboard
+  const handleCopyVouchersRegister = () => {
+    const headers = [
+      'Voucher No',
+      'Date',
+      'Showroom',
+      'Category Name',
+      'Parent Group',
+      'Cost Center / Department',
+      'Recipient / Payee',
+      'Bill / Invoice No',
+      'Payment Mode',
+      'Gross Amount (INR)',
+      'Status',
+      'Remarks / Narration',
+      'Staff Code',
+    ];
+
+    const rows = approvedVouchers.map((v) => {
+      const vDate = v.payment_date ? v.payment_date.slice(0, 10) : '';
+      const bCode = v.branch_code || (v.branch_id ? v.branch_id.replace(/^Aellp-/, '') : 'ASI');
+      const cat = v.category_name || 'General Expense';
+      const parentCat = getParentCategory(cat);
+      const dept = v.department_name || 'General Operations';
+      const payee = v.recipient_name || '';
+      const bill = v.bill_number || '';
+      const mode = v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI';
+      const amt = Number(v.total_amount) || 0;
+      const status = v.status || 'Approved';
+      const remarks = v.remarks || '';
+      const staff = v.requested_by_staff_code || '';
+
+      return [v.voucher_number || '', vDate, bCode, cat, parentCat, dept, payee, bill, mode, amt, status, remarks, staff];
+    });
+
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} voucher records. Ready to paste into Excel!`,
+      setCopiedVouchers
+    );
+  };
+
+  // 3. Staff Advances & Monthly Payroll Deductions CSV Export
+  const handleExportPayrollDeductions = () => {
+    triggerHaptic();
+    const currentMonth = format(new Date(), 'MMMM yyyy');
+    const headers = [
+      'Staff Member',
+      'Department',
+      'Staff Code',
+      'Showroom',
+      'Receipt / Voucher No.',
+      'Disbursal Date',
+      'Advance Disbursed (INR)',
+      'Bills Submitted (INR)',
+      'Cash Returned (INR)',
+      'Remaining Balance Due (INR)',
+      'Payroll Deduction Month',
+      'Payment Mode',
+      'Status',
+      'Purpose / Notes',
+    ];
+
+    const activeDeductions = filteredAdvances.filter((a) => a.unsettled_balance > 0);
+    const exportList = activeDeductions.length > 0 ? activeDeductions : filteredAdvances;
+
+    const rows = exportList.map((adv) => [
+      `"${adv.staff_name.replace(/"/g, '""')}"`,
+      `"${(adv.department_name || 'General Operations').replace(/"/g, '""')}"`,
+      `"${adv.staff_code}"`,
+      `"${adv.branch_code || (adv.branch_id ? adv.branch_id.replace(/^Aellp-/, '') : 'ASI')}"`,
+      `"${adv.receipt_number}"`,
+      `"${adv.advance_date}"`,
+      adv.advance_amount,
+      adv.bills_submitted_amount || 0,
+      adv.cash_returned_amount || 0,
+      adv.unsettled_balance,
+      `"${adv.salary_deduction_month || currentMonth}"`,
+      `"${adv.payment_method === 'Online_UPI' ? 'UPI' : 'Cash'}"`,
+      `"${adv.status.replace(/_/g, ' ')}"`,
+      `"${(adv.purpose || '').replace(/"/g, '""')}"`,
+    ]);
+
+    const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    downloadBlob(
+      `Asopalav_Staff_Salary_Deductions_${selectedBranchFilter}_${format(new Date(), 'yyyy_MM')}.csv`,
+      csv
+    );
+    showToast({
+      type: 'success',
+      title: 'Payroll Deductions Exported',
+      message: `Exported ${rows.length} staff advance deduction lines for month-end payroll processing.`,
+    });
+  };
+
+  // Copy Payroll Deductions to Clipboard
+  const handleCopyPayrollDeductions = () => {
+    const currentMonth = format(new Date(), 'MMMM yyyy');
+    const headers = [
+      'Staff Member',
+      'Department',
+      'Staff Code',
+      'Showroom',
+      'Receipt No',
+      'Disbursal Date',
+      'Advance Amount (INR)',
+      'Bills Submitted (INR)',
+      'Cash Returned (INR)',
+      'Balance Due (INR)',
+      'Deduction Month',
+      'Payment Mode',
+      'Status',
+      'Purpose',
+    ];
+    const activeDeductions = filteredAdvances.filter((a) => a.unsettled_balance > 0);
+    const exportList = activeDeductions.length > 0 ? activeDeductions : filteredAdvances;
+
+    const rows = exportList.map((adv) => [
+      adv.staff_name,
+      adv.department_name || 'General Operations',
+      adv.staff_code,
+      adv.branch_code || (adv.branch_id ? adv.branch_id.replace(/^Aellp-/, '') : 'ASI'),
+      adv.receipt_number,
+      adv.advance_date,
+      adv.advance_amount,
+      adv.bills_submitted_amount || 0,
+      adv.cash_returned_amount || 0,
+      adv.unsettled_balance,
+      adv.salary_deduction_month || currentMonth,
+      adv.payment_method === 'Online_UPI' ? 'UPI' : 'Cash',
+      adv.status.replace(/_/g, ' '),
+      adv.purpose || '',
+    ]);
+
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} payroll deduction rows. Ready to paste into Excel!`,
+      setCopiedPayroll
+    );
+  };
+
+  // 4. Cost Centers & Vendors Full CSV Export
   const handleExportCostCentersCSV = () => {
     triggerHaptic();
     const deptHeaders = ['Rank', 'Department Name', 'Total Spend (INR)', '% Share', 'Voucher Count', 'Average Ticket (INR)', 'Cash Spend (INR)', 'UPI Spend (INR)', 'Primary Payee'];
@@ -459,47 +985,104 @@ export const ReportsPage: React.FC = () => {
     });
   };
 
-  // --------------------------------------------------------------------------
-  // EXPORT GENERATORS
-  // --------------------------------------------------------------------------
+  // Copy Cost Centers Data to Clipboard
+  const handleCopyCostCenters = () => {
+    const headers = [
+      'Rank',
+      'Cost Center / Department',
+      'Parent Division',
+      'Total Spend (INR)',
+      '% Share',
+      'Vouchers Count',
+      'Average Ticket (INR)',
+      'Cash Spend (INR)',
+      'UPI Spend (INR)',
+      'Primary Vendor',
+    ];
+    const rows = costCenterReportData.departments.map((d, idx) => [
+      idx + 1,
+      d.name,
+      d.parentDivision,
+      d.amount,
+      `${d.percentage}%`,
+      d.count,
+      d.avgTicket,
+      d.cashAmount,
+      d.upiAmount,
+      d.primaryVendor,
+    ]);
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} cost center allocation rows. Ready to paste in Excel!`,
+      setCopiedCostCenters
+    );
+  };
 
-  // 1. Daily Cash Statement CSV Export
-  const handleExportDailyCashStatement = () => {
+  // 5. EOD Day-End Closings CSV Export
+  const handleExportEodClosingsCSV = () => {
     triggerHaptic();
     const headers = [
       'Date',
-      'Calendar Day',
-      'Opening Cash (INR)',
-      'Cash Inflows (+) Float (INR)',
-      'Cash Outflows (-) Expenses (INR)',
-      'Net Movement (INR)',
-      'Closing Cash (INR)',
-      'Transaction Count',
+      'Showroom',
+      'Cashier Name',
+      'Expected Cash (INR)',
+      'Counted Cash (INR)',
+      'Variance (INR)',
+      'Slip ID',
       'Status',
     ];
-
-    const rows = dailyCashFlow.days.map((d) => [
-      `"${d.date}"`,
-      `"${d.displayDate}"`,
-      Number(d.opening) || 0,
-      Number(d.inflow) || 0,
-      Number(d.outflow) || 0,
-      Number(d.net) || 0,
-      Number(d.closing) || 0,
-      d.count,
-      `"Balanced"`,
+    const rows = eodLocks.map((lock) => [
+      `"${lock.lock_date || lock.locked_date || lock.lockedDate || ''}"`,
+      `"${lock.branch_id || lock.branchCode || 'ASI'}"`,
+      `"${(lock.cashier_name || lock.locked_by_name || lock.lockedByName || 'Cashier').replace(/"/g, '""')}"`,
+      Number(lock.system_cash_balance || lock.expected_balance || lock.expectedBalance) || 0,
+      Number(lock.physical_counted_cash || lock.counted_balance || lock.countedBalance) || 0,
+      Number(lock.discrepancy || 0),
+      `"${lock.slip_id || lock.slipId || ''}"`,
+      `"${(lock.status || 'Locked').replace(/"/g, '""')}"`,
     ]);
 
     const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     downloadBlob(
-      `Daily_Cash_Statement_${selectedBranchFilter}_${dateBounds.start}_to_${dateBounds.end}.csv`,
+      `Asopalav_EOD_Closings_${selectedBranchFilter}_${dateBounds.start}_to_${dateBounds.end}.csv`,
       csv
     );
     showToast({
       type: 'success',
-      title: 'Cash Statement Exported',
-      message: 'Downloaded verified daily opening and closing cash statement.',
+      title: 'EOD Closings Exported',
+      message: `Exported ${rows.length} day-end closing records to CSV.`,
     });
+  };
+
+  // Copy EOD Closings to Clipboard
+  const handleCopyEodClosings = () => {
+    const headers = [
+      'Date',
+      'Showroom',
+      'Cashier Name',
+      'Expected Cash (INR)',
+      'Counted Cash (INR)',
+      'Variance (INR)',
+      'Slip ID',
+      'Status',
+    ];
+    const rows = eodLocks.map((lock) => [
+      lock.lock_date || lock.locked_date || lock.lockedDate || '',
+      lock.branch_id || lock.branchCode || 'ASI',
+      lock.cashier_name || lock.locked_by_name || lock.lockedByName || 'Cashier',
+      Number(lock.system_cash_balance || lock.expected_balance || lock.expectedBalance) || 0,
+      Number(lock.physical_counted_cash || lock.counted_balance || lock.countedBalance) || 0,
+      Number(lock.discrepancy || 0),
+      lock.slip_id || lock.slipId || '',
+      lock.status || 'Locked',
+    ]);
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} day-end closing records. Ready to paste into Excel!`,
+      setCopiedEod
+    );
   };
 
   // 2. Tally Prime Master CSV Export (Full Support for Multi-Employee Split Items)
@@ -536,7 +1119,7 @@ export const ReportsPage: React.FC = () => {
         v.payment_method === 'Physical_Cash'
           ? `Cash on Hand - ${branchCode} A/c`
           : `UPI Current A/c - ${branchCode}`;
-      const mode = v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI';
+      const mode = v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI';
       const splits = erpService.extractAllSplitsFromVoucher(v, splitsMap);
 
       if (splits.length > 0) {
@@ -739,7 +1322,7 @@ ${voucherXmls}
 
     const exportRows = approvedVouchers.filter((v) => v.payment_type !== 'Advance_Settlement');
 
-    const lines: string[] = [];
+    const rows: (string | number)[][] = [];
     exportRows.forEach((v) => {
       const vDate = v.payment_date ? v.payment_date.slice(0, 10) : '';
       const vNum = v.voucher_number || '';
@@ -756,31 +1339,27 @@ ${voucherXmls}
           const staffTag = s.staffCode ? ` (${s.staffCode})` : '';
           const payee = s.staffName ? `${s.staffName}${staffTag}` : v.recipient_name;
           const cat = s.categoryName || v.category_name || 'Expense';
-            const isSalaryAdv = cat === 'Advance Salary' || cat === 'Staff Adv for Exps';
-            const debitLedger = isSalaryAdv ? 'Advance Against Salary - Staff A/c' : `${cat} A/c`;
+          const isSalaryAdv = cat === 'Advance Salary' || cat === 'Staff Adv for Exps';
+          const debitLedger = isSalaryAdv ? 'Advance Against Salary - Staff A/c' : `${cat} A/c`;
           const amount = Number(s.amount) || 0;
           const narration = s.description || v.remarks || '';
-          lines.push([vDate, vNum, debitLedger, amount, creditLedger, amount, branchCode, payee, mode, narration].join('\t'));
+          rows.push([vDate, vNum, debitLedger, amount, creditLedger, amount, branchCode, payee, mode, narration]);
         });
       } else {
         const debitLedger = `${v.category_name || 'Expense'} A/c`;
         const amount = Number(v.total_amount) || 0;
         const payee = v.recipient_name || '';
         const narration = v.remarks || '';
-        lines.push([vDate, vNum, debitLedger, amount, creditLedger, amount, branchCode, payee, mode, narration].join('\t'));
+        rows.push([vDate, vNum, debitLedger, amount, creditLedger, amount, branchCode, payee, mode, narration]);
       }
     });
 
-    const tsv = [headers.join('\t'), ...lines].join('\n');
-    navigator.clipboard.writeText(tsv).then(() => {
-      setCopiedTally(true);
-      setTimeout(() => setCopiedTally(false), 2500);
-      showToast({
-        type: 'success',
-        title: 'Copied to Clipboard',
-        message: 'Paste directly into Excel or Tally import sheets.',
-      });
-    });
+    copyTableToClipboard(
+      headers,
+      rows,
+      `Copied ${rows.length} Tally ledger entries. Ready to paste into Excel!`,
+      setCopiedTally
+    );
   };
 
   // Print Historical EOD Closing Slip
@@ -877,10 +1456,12 @@ ${voucherXmls}
       voucherNumber: string;
       lineLabel?: string;
       debitLedger: string;
+      parentCategory?: string;
       creditLedger: string;
       amount: number;
       costCenter: string;
       department: string;
+      parentDivision?: string;
       payee: string;
       staffCode?: string;
       paymentMode: string;
@@ -905,8 +1486,11 @@ ${voucherXmls}
           splits.forEach((s, idx) => {
             const staffTag = s.staffCode ? ` (${s.staffCode})` : '';
             const payeeName = s.staffName ? `${s.staffName}${staffTag}` : v.recipient_name;
-            const debitLedger = `${s.categoryName || v.category_name || 'Expense'} A/c`;
-            const dept = s.departmentName || v.department_name || 'General';
+            const rawCat = s.categoryName || v.category_name || 'Expense';
+            const debitLedger = `${rawCat} A/c`;
+            const parentCategory = getParentCategory(rawCat);
+            const rawDept = s.departmentName || v.department_name || 'General';
+            const parentDivision = getParentDepartment(rawDept).name;
             const narration = s.description || v.remarks || `Split expense for ${payeeName}`;
 
             list.push({
@@ -915,10 +1499,12 @@ ${voucherXmls}
               voucherNumber: v.voucher_number,
               lineLabel: `Line ${idx + 1}/${splits.length}`,
               debitLedger,
+              parentCategory,
               creditLedger,
               amount: Number(s.amount) || 0,
               costCenter,
-              department: dept,
+              department: rawDept,
+              parentDivision,
               payee: payeeName,
               staffCode: s.staffCode,
               paymentMode: v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
@@ -929,6 +1515,11 @@ ${voucherXmls}
             });
           });
         } else {
+          const rawCat = v.category_name || 'Expense';
+          const parentCategory = getParentCategory(rawCat);
+          const rawDept = v.department_name || 'General';
+          const parentDivision = getParentDepartment(rawDept).name;
+
           list.push({
             id: v.id,
             date: vDate,
@@ -936,11 +1527,13 @@ ${voucherXmls}
             lineLabel: splits.length > 0 ? `${splits.length} Splits` : undefined,
             debitLedger: (v.category_name === 'Advance Salary' || v.category_name === 'Staff Adv for Exps')
               ? 'Advance Against Salary - Staff A/c'
-              : `${v.category_name || 'Expense'} A/c`,
+              : `${rawCat} A/c`,
+            parentCategory,
             creditLedger,
             amount: Number(v.total_amount) || 0,
             costCenter,
-            department: v.department_name || 'General',
+            department: rawDept,
+            parentDivision,
             payee: v.recipient_name,
             paymentMode: v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI',
             billNumber: v.bill_number || 'N/A',
@@ -951,8 +1544,8 @@ ${voucherXmls}
         }
       });
 
-    return list.slice(0, 200);
-  }, [approvedVouchers, tallyViewMode, splitsMap]);
+    return list;
+  }, [approvedVouchers, tallyViewMode, splitsMap, hierarchyRevision]);
 
   const currentBranchLabel =
     selectedBranchFilter === 'ALL'
@@ -1000,31 +1593,151 @@ ${voucherXmls}
               <span className="hidden sm:inline">Refresh</span>
             </button>
 
-            {/* Primary Action Button */}
+            {/* Primary Action Button Bar */}
             {activeTab === 'daily_cash' && (
-              <button
-                type="button"
-                onClick={handleExportDailyCashStatement}
-                className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
-              >
-                <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
-                <span>Export Cash Statement (CSV)</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyDailyCash}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy daily cash statement rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedDailyCash ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportDailyCashStatement}
+                  className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Export Cash Statement (CSV)</span>
+                </button>
+              </div>
+            )}
+
+            {activeTab === 'vouchers_register' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyVouchersRegister}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy expense voucher register rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedVouchers ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportVouchersRegisterCSV}
+                  className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Export Vouchers (CSV)</span>
+                </button>
+              </div>
+            )}
+
+            {activeTab === 'payroll_advances' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyPayrollDeductions}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy staff advance deduction rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedPayroll ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPayrollDeductions}
+                  className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Export Deductions (CSV)</span>
+                </button>
+              </div>
             )}
 
             {activeTab === 'cost_centers' && (
-              <button
-                type="button"
-                onClick={handleExportCostCentersCSV}
-                className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
-              >
-                <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
-                <span>Export Cost Centers &amp; Vendors (CSV)</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyCostCenters}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy cost center allocation rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedCostCenters ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportCostCentersCSV}
+                  className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Export Cost Centers &amp; Vendors (CSV)</span>
+                </button>
+              </div>
             )}
 
             {activeTab === 'tally' && can('can_export_tally') && (
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyTallyToClipboard}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy Tally ledger rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedTally ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={handleExportTallyXML}
@@ -1045,22 +1758,52 @@ ${voucherXmls}
               </div>
             )}
 
-            {activeTab === 'eod_closings' && eodLocks.length > 0 && (
-              <button
-                type="button"
-                onClick={() => handlePrintEodSlip(eodLocks[0])}
-                className="h-9 px-3.5 py-1.5 rounded-[6px] bg-white dark:bg-[#202024] border border-slate-200 dark:border-[#2e2e2e] hover:bg-slate-100 dark:hover:bg-[#282828] text-slate-800 dark:text-white font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-              >
-                <Printer className="w-3.5 h-3.5 text-[#3ecf8e]" />
-                <span>Print Latest Closing Slip</span>
-              </button>
+            {activeTab === 'eod_closings' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyEodClosings}
+                  className="h-9 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy day-end closing records to clipboard (TSV format for Excel)"
+                >
+                  {copiedEod ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportEodClosingsCSV}
+                  className="h-9 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Export Closings (CSV)</span>
+                </button>
+                {eodLocks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handlePrintEodSlip(eodLocks[0])}
+                    className="h-9 px-3.5 py-1.5 rounded-[6px] bg-white dark:bg-[#202024] border border-slate-200 dark:border-[#2e2e2e] hover:bg-slate-100 dark:hover:bg-[#282828] text-slate-800 dark:text-white font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                    <span>Print Slip</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
       </div>
 
       {/* 2. Main Body Content */}
-      <div className="px-4 lg:px-6 py-4 space-y-4 flex-1 w-full">
+      <div className="px-4 lg:px-6 py-4 space-y-4 flex-1 w-full min-w-0">
         {/* Filters Toolbar */}
         <div className="rounded-[12px] p-2.5 bg-slate-50/80 dark:bg-[#18181a]/80 border border-slate-200 dark:border-[#242424] shadow-2xs">
           <div className="flex flex-wrap items-center justify-between gap-2.5">
@@ -1078,20 +1821,23 @@ ${voucherXmls}
               />
 
               {/* Showroom Dropdown */}
-              <div className="flex items-center gap-1.5 bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#2e2e2e] rounded-[6px] px-2.5 h-8 shadow-2xs">
-                <Building2 className="w-3.5 h-3.5 text-slate-400 dark:text-[#707070]" />
-                <select
+              <div className="w-48 sm:w-56">
+                <SearchableSelect
+                  size="sm"
                   value={selectedBranchFilter}
-                  onChange={(e) => setSelectedBranchFilter(e.target.value)}
-                  className="bg-transparent text-xs text-slate-800 dark:text-[#EDEDED] font-sans focus:outline-none cursor-pointer pr-1"
-                >
-                  <option value="ALL">All Showrooms</option>
-                  {branches.map((b) => (
-                    <option key={b.branch_id} value={b.branch_id}>
-                      {b.short_name || b.branch_name} ({b.branch_code})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setSelectedBranchFilter}
+                  options={[
+                    { value: 'ALL', label: 'All Showrooms', icon: Building2 },
+                    ...branches.map((b) => ({
+                      value: b.branch_id,
+                      label: `${b.short_name || b.branch_name} (${b.branch_code})`,
+                      badge: b.branch_code,
+                      icon: Building2,
+                    })),
+                  ]}
+                  placeholder="All Showrooms"
+                  allowCustom={false}
+                />
               </div>
 
               {/* Payment Mode Selector */}
@@ -1136,65 +1882,113 @@ ${voucherXmls}
 
         {/* 3. Opening & Closing Cash Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Card 1: Opening Balance */}
+          {/* Card 1: Opening Balance / Scope */}
           <MetricCard
-            label="Opening Cash Balance"
+            label={selectedMode === 'Online_UPI' ? 'UPI Vouchers Count' : 'Opening Cash Balance'}
             value={
-              <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-slate-800 dark:text-white">
-                {formatINR(dailyCashFlow.periodOpening)}
-              </span>
+              selectedMode === 'Online_UPI' ? (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-slate-800 dark:text-white">
+                  {voucherSummary.upiCount} Digital Bills
+                </span>
+              ) : (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-slate-800 dark:text-white">
+                  {formatINR(dailyCashFlow.periodOpening)}
+                </span>
+              )
             }
-            subValue={`Cash in drawer at start of period (${dateBounds.start})`}
-            badge="OPENING"
+            subValue={
+              selectedMode === 'Online_UPI'
+                ? 'Online vendor transfers & QR payments'
+                : `Cash in drawer at start of period (${dateBounds.start})`
+            }
+            badge={selectedMode === 'Online_UPI' ? 'DIGITAL' : 'OPENING'}
             badgeColor="neutral"
-            icon={Coins}
+            icon={selectedMode === 'Online_UPI' ? Smartphone : Coins}
           />
 
-          {/* Card 2: Cash Inflows (+) */}
+          {/* Card 2: Inflows / Topups */}
           <MetricCard
-            label="Cash Added (Inflows)"
+            label={selectedMode === 'Online_UPI' ? 'Average UPI Voucher' : 'Cash Added (Inflows)'}
             value={
-              <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-emerald-600 dark:text-[#3ecf8e]">
-                +{formatINR(dailyCashFlow.periodInflows)}
-              </span>
+              selectedMode === 'Online_UPI' ? (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-sky-600 dark:text-sky-400">
+                  {voucherSummary.upiCount > 0 ? formatINR(Math.round(voucherSummary.upi / voucherSummary.upiCount)) : '₹0.00'}
+                </span>
+              ) : (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-emerald-600 dark:text-[#3ecf8e]">
+                  +{formatINR(dailyCashFlow.periodInflows)}
+                </span>
+              )
             }
-            subValue="Cash top-ups and cash box deposits"
-            badge="INFLOWS"
-            badgeColor="emerald"
-            icon={TrendingUp}
+            subValue={
+              selectedMode === 'Online_UPI'
+                ? 'Average ticket size for digital expenses'
+                : 'Cash top-ups and drawer deposits'
+            }
+            badge={selectedMode === 'Online_UPI' ? 'AVG TICKET' : 'INFLOWS'}
+            badgeColor={selectedMode === 'Online_UPI' ? 'neutral' : 'emerald'}
+            icon={selectedMode === 'Online_UPI' ? Wallet : TrendingUp}
           />
 
-          {/* Card 3: Total Outflows (-) */}
+          {/* Card 3: Outflows / Expenses Disbursed */}
           <MetricCard
-            label="Expenses Paid (Outflows)"
+            label={
+              selectedMode === 'Physical_Cash'
+                ? 'Cash Outflows (Disbursed)'
+                : selectedMode === 'Online_UPI'
+                ? 'UPI Expenses Disbursed'
+                : 'Total Expenses & Outflows'
+            }
             value={
               <span className="font-mono tabular-nums text-lg sm:text-xl font-medium text-rose-600 dark:text-rose-400">
-                -{formatINR(dailyCashFlow.periodOutflows)}
+                -{formatINR(
+                  selectedMode === 'Physical_Cash'
+                    ? dailyCashFlow.periodOutflows
+                    : selectedMode === 'Online_UPI'
+                    ? voucherSummary.upi
+                    : dailyCashFlow.periodOutflows + voucherSummary.upi
+                )}
               </span>
             }
-            subValue="Cash vouchers and expenses paid"
+            subValue={
+              selectedMode === 'Physical_Cash'
+                ? `${voucherSummary.cashCount} cash vouchers (${formatCompactINR(voucherSummary.cash)})`
+                : selectedMode === 'Online_UPI'
+                ? `${voucherSummary.upiCount} UPI vouchers in period`
+                : `Cash: ${formatCompactINR(dailyCashFlow.periodOutflows)} · UPI: ${formatCompactINR(voucherSummary.upi)} (${voucherSummary.count} bills)`
+            }
             badge="OUTFLOWS"
             badgeColor="rose"
             icon={Receipt}
           />
 
-          {/* Card 4: Closing Balance */}
+          {/* Card 4: Closing Balance / Current Verified Float */}
           <MetricCard
-            label="Closing Cash Balance"
+            label={selectedMode === 'Online_UPI' ? 'Current UPI Balance' : 'Closing Cash Balance'}
             value={
-              <span className="font-mono tabular-nums text-lg sm:text-xl font-semibold text-emerald-600 dark:text-[#3ecf8e]">
-                {formatINR(dailyCashFlow.periodClosing)}
-              </span>
+              selectedMode === 'Online_UPI' ? (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-semibold text-emerald-600 dark:text-[#3ecf8e]">
+                  {formatINR(wallets[selectedBranchFilter === 'ALL' ? 'ALL' : selectedBranchFilter]?.upi_balance || 0)}
+                </span>
+              ) : (
+                <span className="font-mono tabular-nums text-lg sm:text-xl font-semibold text-emerald-600 dark:text-[#3ecf8e]">
+                  {formatINR(dailyCashFlow.periodClosing)}
+                </span>
+              )
             }
-            subValue={`Current cash in drawer (Till: ${formatINR(dailyCashFlow.currentWalletCash)})`}
+            subValue={
+              selectedMode === 'Online_UPI'
+                ? `Live bank account balance (${selectedBranchFilter === 'ALL' ? 'All Outlets' : selectedBranchFilter})`
+                : `Current cash in drawer: ${formatINR(dailyCashFlow.currentWalletCash)}`
+            }
             badge="CLOSING"
             badgeColor="emerald"
             icon={Wallet}
           />
         </div>
 
-        {/* 4. Tab Navigation (Simple & Clear) */}
-        <div className="border-b border-slate-200 dark:border-[#282828] flex items-center gap-1 overflow-x-auto scrollbar-none">
+        {/* 4. Tab Navigation (Simple & Clear with touch scroll) */}
+        <div className="border-b border-slate-200 dark:border-[#282828] flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0 overscroll-x-contain pb-0.5">
           <button
             type="button"
             onClick={() => {
@@ -1227,6 +2021,73 @@ ${voucherXmls}
             </span>
           </button>
 
+          {/* Tab 2: Expense Vouchers Register */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic();
+              setActiveTab('vouchers_register');
+            }}
+            className={cn(
+              'px-4 py-2.5 text-xs font-medium font-sans flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors cursor-pointer select-none',
+              activeTab === 'vouchers_register'
+                ? 'border-[#3ecf8e] text-slate-900 dark:text-[#EDEDED] font-semibold'
+                : 'border-transparent text-slate-500 dark:text-[#A1A1A1] hover:text-slate-800 dark:hover:text-[#EDEDED] hover:border-slate-300 dark:hover:border-[#383838]'
+            )}
+          >
+            <Receipt
+              className={cn(
+                'w-4 h-4',
+                activeTab === 'vouchers_register' ? 'text-[#3ecf8e]' : 'text-slate-400 dark:text-[#707070]'
+              )}
+            />
+            <span>Expense Vouchers Register</span>
+            <span
+              className={cn(
+                'px-1.5 py-0.2 rounded-[4px] text-[10px] font-mono tabular-nums ml-1',
+                activeTab === 'vouchers_register'
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-500/20'
+                  : 'bg-slate-100 dark:bg-[#1f1f1f] text-slate-500 dark:text-[#707070]'
+              )}
+            >
+              {approvedVouchers.length} Vouchers
+            </span>
+          </button>
+
+          {/* Tab 3: Staff Advances & Deductions */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic();
+              setActiveTab('payroll_advances');
+            }}
+            className={cn(
+              'px-4 py-2.5 text-xs font-medium font-sans flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors cursor-pointer select-none',
+              activeTab === 'payroll_advances'
+                ? 'border-[#3ecf8e] text-slate-900 dark:text-[#EDEDED] font-semibold'
+                : 'border-transparent text-slate-500 dark:text-[#A1A1A1] hover:text-slate-800 dark:hover:text-[#EDEDED] hover:border-slate-300 dark:hover:border-[#383838]'
+            )}
+          >
+            <HandCoins
+              className={cn(
+                'w-4 h-4',
+                activeTab === 'payroll_advances' ? 'text-[#3ecf8e]' : 'text-slate-400 dark:text-[#707070]'
+              )}
+            />
+            <span>Staff Advances &amp; Deductions</span>
+            <span
+              className={cn(
+                'px-1.5 py-0.2 rounded-[4px] text-[10px] font-mono tabular-nums ml-1',
+                activeTab === 'payroll_advances'
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-500/20'
+                  : 'bg-slate-100 dark:bg-[#1f1f1f] text-slate-500 dark:text-[#707070]'
+              )}
+            >
+              {filteredAdvances.length} Records
+            </span>
+          </button>
+
+          {/* Tab 4: Cost Centers & Vendors */}
           <button
             type="button"
             onClick={() => {
@@ -1259,6 +2120,7 @@ ${voucherXmls}
             </span>
           </button>
 
+          {/* Tab 5: Tally Prime Export */}
           <button
             type="button"
             onClick={() => {
@@ -1291,6 +2153,7 @@ ${voucherXmls}
             </span>
           </button>
 
+          {/* Tab 6: Day-End Cash Closings */}
           <button
             type="button"
             onClick={() => {
@@ -1310,7 +2173,7 @@ ${voucherXmls}
                 activeTab === 'eod_closings' ? 'text-[#3ecf8e]' : 'text-slate-400 dark:text-[#707070]'
               )}
             />
-            <span>EOD Till Closings</span>
+            <span>Day-End Cash Closings</span>
             <span
               className={cn(
                 'px-1.5 py-0.2 rounded-[4px] text-[10px] font-mono tabular-nums ml-1',
@@ -1338,6 +2201,24 @@ ${voucherXmls}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCopyDailyCash}
+                  className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy daily cash statement rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedDailyCash ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={handleExportDailyCashStatement}
@@ -1424,7 +2305,351 @@ ${voucherXmls}
           </div>
         )}
 
-        {/* 6. TAB 2: COST CENTERS & VENDOR PROCUREMENT MATRIX */}
+        {/* TAB 2: EXPENSE VOUCHERS REGISTER */}
+        {activeTab === 'vouchers_register' && (
+          <div className="space-y-4">
+            <div className="rounded-[12px] p-4 bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium text-slate-900 dark:text-[#EDEDED] font-sans flex items-center gap-2">
+                  <span>Expense Vouchers Register</span>
+                  <span className="px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] text-[10px] font-mono font-bold">
+                    CA Itemized Audit
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-[#A1A1A1] font-sans mt-0.5">
+                  Full itemized ledger of all approved vouchers with parent-child grouping, cost centers, and payment modes.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleCopyVouchersRegister}
+                  className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy all voucher rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedVouchers ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportVouchersRegisterCSV}
+                  className="h-8.5 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Download Vouchers (CSV)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Vouchers Table */}
+            <div className="rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto max-h-[620px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[#161618]/95 backdrop-blur-xs border-b border-slate-200 dark:border-[#242424] text-[11px] font-mono uppercase text-slate-500 dark:text-[#707070]">
+                    <tr>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Voucher #</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Date</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Showroom</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Category &amp; Parent</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Department / Cost Center</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Payee / Recipient</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Bill / Ref #</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Mode</th>
+                      <th className="py-2.5 px-3 font-semibold text-right whitespace-nowrap">Gross (₹)</th>
+                      <th className="py-2.5 px-3 font-semibold text-center whitespace-nowrap">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#202020] font-sans">
+                    {approvedVouchers.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="py-8 text-center text-slate-400 dark:text-[#707070]">
+                          No approved expense vouchers found matching the active filter criteria.
+                        </td>
+                      </tr>
+                    ) : (
+                      approvedVouchers.map((v) => {
+                        const vDate = v.payment_date ? v.payment_date.slice(0, 10) : '';
+                        const bCode = v.branch_code || (v.branch_id ? v.branch_id.replace(/^Aellp-/, '') : 'ASI');
+                        const cat = v.category_name || 'General Expense';
+                        const parentCat = getParentCategory(cat);
+                        const dept = v.department_name || 'General Operations';
+                        const payee = v.recipient_name || '-';
+                        const bill = v.bill_number || '-';
+                        const mode = v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI';
+                        const amt = Number(v.total_amount) || 0;
+
+                        return (
+                          <tr
+                            key={v.id}
+                            className="hover:bg-slate-50/60 dark:hover:bg-[#1c1c1f] transition-colors"
+                          >
+                            <td className="py-2 px-3 font-mono text-[11px] font-medium text-slate-900 dark:text-[#EDEDED] whitespace-nowrap">
+                              {v.voucher_number || '-'}
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-[#A1A1A1] whitespace-nowrap">
+                              {vDate}
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-slate-100 dark:bg-[#202024] text-slate-700 dark:text-[#EDEDED] border border-slate-200 dark:border-[#2e2e32] font-semibold">
+                                {bCode}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <div className="flex flex-col">
+                                <span className="font-medium text-slate-900 dark:text-zinc-100">{cat}</span>
+                                <span className="text-[10px] text-emerald-600 dark:text-[#3ecf8e] font-medium">
+                                  {parentCat}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 text-slate-700 dark:text-[#A1A1A1] whitespace-nowrap text-xs">
+                              {dept}
+                            </td>
+                            <td className="py-2 px-3 text-slate-800 dark:text-[#EDEDED] font-medium whitespace-nowrap">
+                              {payee}
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-500 dark:text-[#888888] whitespace-nowrap">
+                              {bill}
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <span
+                                className={cn(
+                                  'px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono font-medium',
+                                  mode === 'Cash'
+                                    ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20'
+                                    : 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20'
+                                )}
+                              >
+                                {mode}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-mono tabular-nums text-right font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                              {formatINR(amt)}
+                            </td>
+                            <td className="py-2 px-3 text-center whitespace-nowrap">
+                              <span className="px-2 py-0.5 rounded-[4px] text-[10px] font-mono bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-500/20 font-medium">
+                                Approved
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: STAFF ADVANCES & SALARY DEDUCTIONS */}
+        {activeTab === 'payroll_advances' && (
+          <div className="space-y-4">
+            <div className="rounded-[12px] p-4 bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium text-slate-900 dark:text-[#EDEDED] font-sans flex items-center gap-2">
+                  <span>Staff Advances &amp; Salary Deductions</span>
+                  <span className="px-2 py-0.5 rounded-[4px] bg-[#3ecf8e]/10 text-emerald-700 dark:text-[#3ecf8e] text-[10px] font-mono font-bold">
+                    Payroll Schedule
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-[#A1A1A1] font-sans mt-0.5">
+                  Comprehensive audit of employee advances, bill settlements, cash returns, and month-end payroll deduction balances.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleCopyPayrollDeductions}
+                  className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy staff advance deduction rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedPayroll ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPayrollDeductions}
+                  className="h-8.5 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Download Deductions (CSV)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Summary Telemetry Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-[8px] bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] space-y-1">
+                <span className="text-[11px] font-mono uppercase text-slate-400 dark:text-[#888888]">
+                  Total Advance Records
+                </span>
+                <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+                  {advancesSummary.totalCount}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-[#707070]">
+                  {advancesSummary.activeDueCount} active pending deductions
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-[8px] bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] space-y-1">
+                <span className="text-[11px] font-mono uppercase text-slate-400 dark:text-[#888888]">
+                  Total Disbursed
+                </span>
+                <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+                  {formatINR(advancesSummary.totalDisbursed)}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-[#707070]">
+                  Disbursed across selected branches
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-[8px] bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] space-y-1">
+                <span className="text-[11px] font-mono uppercase text-slate-400 dark:text-[#888888]">
+                  Total Settled / Recovered
+                </span>
+                <div className="text-lg font-bold font-mono text-emerald-600 dark:text-[#3ecf8e]">
+                  {formatINR(advancesSummary.totalRecovered)}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-[#707070]">
+                  Bills submitted &amp; cash returned
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-[8px] bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] space-y-1">
+                <span className="text-[11px] font-mono uppercase text-slate-400 dark:text-[#888888]">
+                  Outstanding Balance Due
+                </span>
+                <div className="text-lg font-bold font-mono text-rose-600 dark:text-rose-400">
+                  {formatINR(advancesSummary.totalDue)}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-[#707070]">
+                  Pending payroll deductions
+                </div>
+              </div>
+            </div>
+
+            {/* Advances Table */}
+            <div className="rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto max-h-[620px] overflow-y-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[#161618]/95 backdrop-blur-xs border-b border-slate-200 dark:border-[#242424] text-[11px] font-mono uppercase text-slate-500 dark:text-[#707070]">
+                    <tr>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Staff Member</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Department</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Staff Code</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Showroom</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Receipt / Ref #</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Disbursal Date</th>
+                      <th className="py-2.5 px-3 font-semibold text-right whitespace-nowrap">Advance (₹)</th>
+                      <th className="py-2.5 px-3 font-semibold text-right whitespace-nowrap">Settled (₹)</th>
+                      <th className="py-2.5 px-3 font-semibold text-right whitespace-nowrap">Balance Due (₹)</th>
+                      <th className="py-2.5 px-3 font-semibold whitespace-nowrap">Deduction Month</th>
+                      <th className="py-2.5 px-3 font-semibold text-center whitespace-nowrap">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#202020] font-sans">
+                    {filteredAdvances.length === 0 ? (
+                      <tr>
+                        <td colSpan={11} className="py-8 text-center text-slate-400 dark:text-[#707070]">
+                          No staff advances or salary deductions found for the selected period.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAdvances.map((adv) => {
+                        const bCode = adv.branch_code || (adv.branch_id ? adv.branch_id.replace(/^Aellp-/, '') : 'ASI');
+                        const settledAmt = (Number(adv.bills_submitted_amount) || 0) + (Number(adv.cash_returned_amount) || 0);
+                        const dueAmt = Number(adv.unsettled_balance) || 0;
+
+                        return (
+                          <tr
+                            key={adv.id}
+                            className="hover:bg-slate-50/60 dark:hover:bg-[#1c1c1f] transition-colors"
+                          >
+                            <td className="py-2 px-3 font-medium text-slate-900 dark:text-[#EDEDED] whitespace-nowrap">
+                              {adv.staff_name}
+                            </td>
+                            <td className="py-2 px-3 text-slate-600 dark:text-[#A1A1A1] whitespace-nowrap text-xs">
+                              {adv.department_name || 'General Operations'}
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-700 dark:text-[#EDEDED] whitespace-nowrap">
+                              {adv.staff_code}
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-slate-100 dark:bg-[#202024] text-slate-700 dark:text-[#EDEDED] border border-slate-200 dark:border-[#2e2e32] font-semibold">
+                                {bCode}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-800 dark:text-[#EDEDED] whitespace-nowrap">
+                              {adv.receipt_number}
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-[#A1A1A1] whitespace-nowrap">
+                              {adv.advance_date}
+                            </td>
+                            <td className="py-2 px-3 font-mono tabular-nums text-right font-medium text-slate-900 dark:text-white whitespace-nowrap">
+                              {formatINR(adv.advance_amount)}
+                            </td>
+                            <td className="py-2 px-3 font-mono tabular-nums text-right font-medium text-emerald-600 dark:text-[#3ecf8e] whitespace-nowrap">
+                              {settledAmt > 0 ? formatINR(settledAmt) : '-'}
+                            </td>
+                            <td className="py-2 px-3 font-mono tabular-nums text-right font-semibold whitespace-nowrap">
+                              <span
+                                className={
+                                  dueAmt > 0
+                                    ? 'text-rose-600 dark:text-rose-400 font-bold'
+                                    : 'text-emerald-600 dark:text-[#3ecf8e]'
+                                }
+                              >
+                                {dueAmt > 0 ? formatINR(dueAmt) : '₹0'}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-[#A1A1A1] whitespace-nowrap">
+                              {adv.salary_deduction_month || format(new Date(), 'MMMM yyyy')}
+                            </td>
+                            <td className="py-2 px-3 text-center whitespace-nowrap">
+                              <span
+                                className={cn(
+                                  'px-2 py-0.5 rounded-[4px] text-[10px] font-mono font-medium',
+                                  dueAmt === 0
+                                    ? 'bg-emerald-500/10 text-emerald-700 dark:text-[#3ecf8e] border border-emerald-500/20'
+                                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20'
+                                )}
+                              >
+                                {dueAmt === 0 ? 'Settled' : 'Deduction Pending'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 6. TAB 4: COST CENTERS & VENDOR PROCUREMENT MATRIX */}
         {activeTab === 'cost_centers' && (
           <div className="space-y-4">
             {/* Header / Sub-banner */}
@@ -1442,6 +2667,24 @@ ${voucherXmls}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCopyCostCenters}
+                  className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy cost center allocation rows to clipboard (TSV format for Excel)"
+                >
+                  {copiedCostCenters ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
                 <button
                   type="button"
                   onClick={handleExportCostCentersCSV}
@@ -1488,6 +2731,127 @@ ${voucherXmls}
               </div>
             </div>
 
+            {/* Two-Tier Hierarchy Rollups (Parent Divisions & Parent Categories) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Card 1: Showroom Parent Divisions Rollup */}
+              <div className="rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] shadow-2xs p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#222222]">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-[#3ecf8e]" />
+                    <h3 className="text-xs font-semibold text-slate-900 dark:text-white uppercase font-sans">
+                      Division Cost Centers (Parent Hierarchy)
+                    </h3>
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    {costCenterReportData.parentDivisions.length} Divisions
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {costCenterReportData.parentDivisions.map((div) => (
+                    <div key={div.code} className="p-2.5 rounded-[6px] bg-slate-50/70 dark:bg-[#18181a] border border-slate-200/70 dark:border-[#242424] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans">
+                            {div.name}
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-200 dark:bg-[#282828] text-slate-600 dark:text-[#A1A1A1]">
+                            {div.code}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-slate-900 dark:text-white tabular-nums">
+                            {formatINR(div.amount)}
+                          </span>
+                          <span className="text-[11px] font-mono text-emerald-600 dark:text-[#3ecf8e] font-semibold w-12 text-right">
+                            {div.percentage}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-[#282828] overflow-hidden">
+                        <div
+                          className="h-full bg-[#3ecf8e] rounded-full transition-all"
+                          style={{ width: `${Math.min(div.percentage, 100)}%` }}
+                        />
+                      </div>
+
+                      {/* Child Departments Chips */}
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {div.childDepts.map((cd) => (
+                          <span
+                            key={cd.name}
+                            className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#282828] text-slate-700 dark:text-zinc-300"
+                          >
+                            {cd.name}: <strong className="font-semibold text-slate-900 dark:text-white">{formatINR(cd.amount)}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Card 2: Parent Expense Categories Rollup */}
+              <div className="rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] shadow-2xs p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#222222]">
+                  <div className="flex items-center gap-2">
+                    <Tags className="w-4 h-4 text-sky-500" />
+                    <h3 className="text-xs font-semibold text-slate-900 dark:text-white uppercase font-sans">
+                      Parent Category Heads (MIS Rollup)
+                    </h3>
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    {costCenterReportData.parentCategories.length} Heads
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
+                  {costCenterReportData.parentCategories.map((pc) => (
+                    <div key={pc.name} className="p-2.5 rounded-[6px] bg-slate-50/70 dark:bg-[#18181a] border border-slate-200/70 dark:border-[#242424] space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-900 dark:text-white font-sans truncate pr-2">
+                          {pc.name}
+                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono text-xs font-bold text-slate-900 dark:text-white tabular-nums">
+                            {formatINR(pc.amount)}
+                          </span>
+                          <span className="text-[11px] font-mono text-sky-600 dark:text-sky-400 font-semibold w-12 text-right">
+                            {pc.percentage}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-[#282828] overflow-hidden">
+                        <div
+                          className="h-full bg-sky-500 rounded-full transition-all"
+                          style={{ width: `${Math.min(pc.percentage, 100)}%` }}
+                        />
+                      </div>
+
+                      {/* Child Categories Chips */}
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {pc.childCats.slice(0, 4).map((cc) => (
+                          <span
+                            key={cc.name}
+                            className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#282828] text-slate-700 dark:text-zinc-300 truncate max-w-[170px]"
+                          >
+                            {cc.name}: <strong className="font-semibold text-slate-900 dark:text-white">{formatINR(cc.amount)}</strong>
+                          </span>
+                        ))}
+                        {pc.childCats.length > 4 && (
+                          <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono text-slate-400">
+                            +{pc.childCats.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* Section A: All Cost Centers Table */}
             <div className="rounded-[12px] bg-white dark:bg-[#141414] border border-slate-200 dark:border-[#242424] shadow-2xs overflow-hidden space-y-2 p-4">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#222222]">
@@ -1508,6 +2872,7 @@ ${voucherXmls}
                     <tr className="border-b border-slate-200 dark:border-[#242424] bg-slate-50/80 dark:bg-[#161618] text-[11px] font-mono uppercase text-slate-500 dark:text-[#707070]">
                       <th className="py-2.5 px-3 font-semibold w-12 text-center">Rank</th>
                       <th className="py-2.5 px-3 font-semibold">Department Name</th>
+                      <th className="py-2.5 px-3 font-semibold">Parent Division</th>
                       <th className="py-2.5 px-3 font-semibold text-right">Spend (INR)</th>
                       <th className="py-2.5 px-3 font-semibold text-center w-28">% Share</th>
                       <th className="py-2.5 px-3 font-semibold text-center">Bills</th>
@@ -1518,7 +2883,7 @@ ${voucherXmls}
                   <tbody className="divide-y divide-slate-100 dark:divide-[#202020] font-sans">
                     {costCenterReportData.departments.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-400">
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
                           No department records found for this period.
                         </td>
                       </tr>
@@ -1530,6 +2895,11 @@ ${voucherXmls}
                           </td>
                           <td className="py-2 px-3 font-semibold text-slate-900 dark:text-white">
                             {dept.name}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="px-1.5 py-0.5 rounded-[4px] text-[10px] font-mono bg-slate-100 dark:bg-[#222222] text-slate-600 dark:text-[#A1A1A1] border border-slate-200 dark:border-[#2e2e2e]">
+                              {dept.parentDivision}
+                            </span>
                           </td>
                           <td className="py-2 px-3 font-mono font-bold text-right text-slate-900 dark:text-white tabular-nums">
                             {formatINR(dept.amount)}
@@ -1790,7 +3160,12 @@ ${voucherXmls}
                             </div>
                           </td>
                           <td className="py-2 px-3 text-slate-800 dark:text-[#EDEDED] font-medium whitespace-nowrap">
-                            {r.debitLedger}
+                            <div>{r.debitLedger}</div>
+                            {r.parentCategory && (
+                              <div className="text-[10px] font-mono text-slate-400 dark:text-[#707070]">
+                                {r.parentCategory}
+                              </div>
+                            )}
                           </td>
                           <td className="py-2 px-3 font-mono tabular-nums text-right font-medium text-slate-900 dark:text-white whitespace-nowrap">
                             {formatINR(r.amount)}
@@ -1841,17 +3216,43 @@ ${voucherXmls}
             <div className="rounded-[12px] p-4 bg-white dark:bg-[#18181a] border border-slate-200 dark:border-[#242424] shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-medium text-slate-900 dark:text-[#EDEDED] font-sans">
-                  Showroom Daily Till Closing Slips & Denomination Counts
+                  Showroom Daily Cash Closing Slips & Denomination Counts
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-[#A1A1A1] font-sans mt-0.5">
                   Permanent record of end-of-day physical note counts, system balances, and cashier-manager sign-offs.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-slate-500 dark:text-[#888888]">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <span className="text-xs font-mono text-slate-500 dark:text-[#888888] mr-1 hidden sm:inline">
                   {eodLocks.length} Closing{eodLocks.length === 1 ? '' : 's'} Logged
                 </span>
+                <button
+                  type="button"
+                  onClick={handleCopyEodClosings}
+                  className="h-8.5 px-3 py-1.5 rounded-[6px] border border-slate-200 dark:border-[#2e2e2e] bg-slate-50 dark:bg-[#1a1a1a] hover:bg-slate-100 dark:hover:bg-[#222] text-slate-700 dark:text-[#A1A1A1] hover:text-slate-900 dark:hover:text-[#EDEDED] text-xs font-medium font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                  title="Copy day-end closing records to clipboard (TSV format for Excel)"
+                >
+                  {copiedEod ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[#3ecf8e]" />
+                      <span>Copied Rows</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Copy Rows</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportEodClosingsCSV}
+                  className="h-8.5 px-3.5 py-1.5 rounded-[6px] bg-[#3ecf8e] hover:bg-[#24b47e] text-[#171717] font-medium text-xs font-sans flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:bg-[#1fa672]"
+                >
+                  <Download className="w-4 h-4 text-[#171717] stroke-[2.5]" />
+                  <span>Download Closings (CSV)</span>
+                </button>
               </div>
             </div>
 
@@ -1877,7 +3278,7 @@ ${voucherXmls}
                     {eodLocks.length === 0 ? (
                       <tr>
                         <td colSpan={10} className="py-8 text-center text-slate-400 dark:text-[#707070] text-xs">
-                          No daily till closing slips recorded yet for this showroom. Lock the till using Daily Till Lock (F9).
+                          No daily cash closing slips recorded yet for this showroom. Count and record cash using Day-End Cash Count.
                         </td>
                       </tr>
                     ) : (

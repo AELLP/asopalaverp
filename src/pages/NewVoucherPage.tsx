@@ -19,12 +19,14 @@ import { format } from 'date-fns';
 import { animateErrorBanner } from '@/lib/animations';
 import { showToast } from '@/components/ui/ToastContainer';
 import { VendorSplitItem, VoucherMode } from '@/types/database';
+import { getParentCategory, getParentDepartment } from '@/lib/hierarchyConfig';
 import {  CheckCircle2,  Check,  RotateCcw,
   Sparkles,  Zap,  Users,  Receipt,  ShieldAlert,  AlertTriangle,
   Store,
   Truck,  X,
   CreditCard,
   Coins,  Eye,
+  IndianRupee,
 } from 'lucide-react';
 
 export const NewVoucherPage: React.FC = () => {
@@ -161,6 +163,40 @@ export const NewVoucherPage: React.FC = () => {
   const [remarks, setRemarks] = useState<string>('');
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
 
+  // Two-Tier Hierarchical Options for Categories (Parent -> Child) & Departments (Division -> Dept)
+  // Filtering only active items for new expense booking
+  const activeCategories = useMemo(() => categories.filter((c) => c.is_active !== false), [categories]);
+  const activeDepartments = useMemo(() => departments.filter((d) => d.is_active !== false), [departments]);
+  const activeStaff = useMemo(() => staff.filter((s) => s.is_active !== false), [staff]);
+  const activeCouriers = useMemo(() => couriers.filter((c) => c.is_active !== false), [couriers]);
+
+  const categoryOptions = useMemo(() => {
+    return activeCategories
+      .map((c) => {
+        const parent = c.parent_category || getParentCategory(c.category_name, c.color_theme) || 'General Expenses';
+        return {
+          value: c.category_name,
+          label: c.category_name,
+          group: parent,
+        };
+      })
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+  }, [activeCategories]);
+
+  const departmentOptions = useMemo(() => {
+    return activeDepartments
+      .map((d) => {
+        const parent = d.parent_division_name || getParentDepartment(d.department_code || d.department_name).name || 'Store Operations & Front Desk';
+        return {
+          value: d.department_name,
+          label: d.department_name,
+          badge: d.department_code,
+          group: parent,
+        };
+      })
+      .sort((a, b) => (a.group || '').localeCompare(b.group || '') || a.label.localeCompare(b.label));
+  }, [activeDepartments]);
+
   // GST Tax Invoice State (for B2B Vendor Invoices & ITC Claims)
   const [isGstInvoice, setIsGstInvoice] = useState<boolean>(false);
   const [vendorGstin, setVendorGstin] = useState<string>('');
@@ -197,6 +233,7 @@ export const NewVoucherPage: React.FC = () => {
   // Submission, Preview & Feedback State
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+  const [sec40A3Acknowledged, setSec40A3Acknowledged] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successVoucher, setSuccessVoucher] = useState<any | null>(null);
   const errorBannerRef = useRef<HTMLDivElement | null>(null);
@@ -216,7 +253,7 @@ export const NewVoucherPage: React.FC = () => {
     }>();
 
     // Sort descending by date so we capture the latest category & department used
-    const sorted = [...vouchers].sort((a, b) => {
+    const sorted = vouchers.toSorted((a, b) => {
       const da = a.payment_date || a.created_at || '';
       const db = b.payment_date || b.created_at || '';
       return db.localeCompare(da);
@@ -414,6 +451,7 @@ export const NewVoucherPage: React.FC = () => {
   const isInsufficientBalance = finalCalculatedAmount > 0 && finalCalculatedAmount > availableBalance;
 
   const handleResetForm = () => {
+    setSec40A3Acknowledged(false);
     setAmount('');
     setCategoryName('');
     setDepartmentName('');
@@ -471,7 +509,7 @@ export const NewVoucherPage: React.FC = () => {
 
     // Cash Limit Check (₹10,000 threshold)
     if (sec40A3Check.exceeded && !is40A3ExceededAllowed()) {
-      setError(`Cash payment of ${formatINR(finalCalculatedAmount)} exceeds the ₹10,000 cash limit. Please switch to Online UPI or obtain Manager Approval.`);
+      setError(`Cash payment of ${formatINR(finalCalculatedAmount)} exceeds the ₹10,000 cash limit. Please switch to UPI or obtain Manager Approval.`);
       return;
     }
 
@@ -876,6 +914,10 @@ export const NewVoucherPage: React.FC = () => {
         setIsPreviewOpen(false);
       } else if (e.key === 'Enter') {
         e.preventDefault();
+        if (paymentMethod === 'Physical_Cash' && finalCalculatedAmount > 10000 && !sec40A3Acknowledged) {
+          triggerHaptic('error');
+          return;
+        }
         executeFinalDisbursalRef.current();
       }
     };
@@ -949,7 +991,7 @@ export const NewVoucherPage: React.FC = () => {
             <div className="flex justify-between items-center py-2.5">
               <span className="text-slate-500 dark:text-zinc-400 font-sans">Payment Source:</span>
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[6px] text-xs font-mono font-medium bg-slate-100 dark:bg-[#1f1f1f] text-slate-800 dark:text-zinc-300 border border-slate-200 dark:border-[#2e2e2e]">
-                {successVoucher.payment_method === 'Physical_Cash' ? 'Cash Box' : 'Online UPI'}
+                {successVoucher.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'}
               </span>
             </div>
 
@@ -997,7 +1039,7 @@ export const NewVoucherPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-full flex-1 flex flex-col bg-white dark:bg-[#141414] text-slate-900 dark:text-[#EDEDED] font-sans antialiased selection:bg-[#3ecf8e]/20 selection:text-[#3ecf8e] pb-6 select-none">
+    <div className="min-h-full flex-1 flex flex-col min-w-0 bg-white dark:bg-[#141414] text-slate-900 dark:text-[#EDEDED] font-sans antialiased selection:bg-[#3ecf8e]/20 selection:text-[#3ecf8e] pb-6 select-none">
       {/* 1. Add Expense Header (2-Layer Layout: Left Title & Subtitle, Right Actions) */}
       <div className="border-b border-slate-200 dark:border-[#242424] bg-white dark:bg-[#141414] px-4 lg:px-6 py-3.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
@@ -1040,7 +1082,7 @@ export const NewVoucherPage: React.FC = () => {
       </div>
 
       {/* 2. Main Studio Content Area */}
-      <div className="px-4 lg:px-6 py-4 space-y-4 flex-1">
+      <div className="px-4 lg:px-6 py-4 space-y-4 flex-1 min-w-0">
         {/* Error Alert Banner */}
         {error && (
           <div ref={errorBannerRef}>
@@ -1074,7 +1116,7 @@ export const NewVoucherPage: React.FC = () => {
                   Cash Limit Notice (Over ₹10,000)
                 </strong>
                 <span className="text-amber-800 dark:text-amber-300 text-xs leading-relaxed">
-                  Cash payment of {formatINR(finalCalculatedAmount)} exceeds ₹10,000. Please pay with Online UPI or obtain Manager Approval.
+                  Cash payment of {formatINR(finalCalculatedAmount)} exceeds ₹10,000. Please pay with UPI or obtain Manager Approval.
                 </span>
               </div>
             </div>
@@ -1083,16 +1125,16 @@ export const NewVoucherPage: React.FC = () => {
               onClick={() => setPaymentMethod('Online_UPI')}
               className="px-3.5 py-1.5 rounded-[6px] bg-white dark:bg-[#202020] hover:bg-slate-50 dark:hover:bg-[#282828] text-slate-800 dark:text-white border border-slate-300 dark:border-[#2e2e2e] font-semibold text-xs shrink-0 cursor-pointer shadow-xs transition-all"
             >
-              Pay via Online UPI
+              Pay via UPI
             </button>
           </div>
         )}
 
         {/* Main 2-Column Responsive POS Form Body */}
-        <form ref={formRef} onSubmit={handleSubmit} className="w-full">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 items-start">
+        <form ref={formRef} onSubmit={handleSubmit} className="w-full min-w-0">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 items-start min-w-0">
             {/* LEFT COLUMN: Modes, Basic Details, Expense Details */}
-            <div className="lg:col-span-8 space-y-4">
+            <div className="lg:col-span-8 space-y-4 min-w-0">
               {/* 1. COMPACT MODE SELECTION TABS */}
               <div className="w-full">
                 <SegmentedControl
@@ -1109,8 +1151,8 @@ export const NewVoucherPage: React.FC = () => {
               </div>
 
           {/* CARD 1: BASIC DETAILS */}
-          <div className="p-4 sm:p-5 rounded-[12px] bg-white dark:bg-[#171717] border border-slate-200 dark:border-[#242424] shadow-2xs space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="p-4 sm:p-5 rounded-[12px] bg-white dark:bg-[#171717] border border-slate-200 dark:border-[#242424] shadow-2xs space-y-4 min-w-0">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {/* Showroom / Branch */}
               <div className="space-y-1 min-w-0">
                 <label className="block text-xs font-medium text-slate-700 dark:text-[#EDEDED]">
@@ -1210,7 +1252,7 @@ export const NewVoucherPage: React.FC = () => {
                 )}
               </div>
 
-              {/* Right 5 cols: Paid From (Online UPI vs Cash Box) */}
+              {/* Right 5 cols: Paid From (UPI vs Cash) */}
               <div className="md:col-span-5 space-y-1.5">
                 <label className="block text-xs font-medium text-slate-800 dark:text-[#EDEDED]">
                   Pay Mode *
@@ -1233,7 +1275,7 @@ export const NewVoucherPage: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium flex items-center gap-1.5">
                         <CreditCard className="w-3.5 h-3.5 text-sky-500" />
-                        <span>Online UPI</span>
+                        <span>UPI</span>
                       </span>
                       {paymentMethod === 'Online_UPI' && <Check className="w-3 h-3 text-sky-400 stroke-[2.5]" />}
                     </div>
@@ -1257,8 +1299,8 @@ export const NewVoucherPage: React.FC = () => {
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium flex items-center gap-1.5">
-                        <Coins className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e]" />
-                        <span>Cash Box</span>
+                        <IndianRupee className="w-3.5 h-3.5 text-emerald-600 dark:text-[#3ecf8e] stroke-[2.2]" />
+                        <span>Cash</span>
                       </span>
                       {paymentMethod === 'Physical_Cash' && <Check className="w-3 h-3 text-[#3ecf8e] stroke-[2.5]" />}
                     </div>
@@ -1290,7 +1332,7 @@ export const NewVoucherPage: React.FC = () => {
                     setRequestedByStaffName('');
                   }
                 }}
-                options={staff.map((s) => ({
+                options={activeStaff.map((s) => ({
                   value: s.staff_code,
                   label: `${s.first_name} ${s.last_name || ''}`.trim(),
                   subLabel: s.department_name || s.designation,
@@ -1473,10 +1515,7 @@ export const NewVoucherPage: React.FC = () => {
                         <SearchableSelect
                           value={categoryName}
                           onChange={setCategoryName}
-                          options={categories.map((c) => ({
-                            value: c.category_name,
-                            label: c.category_name,
-                          }))}
+                          options={categoryOptions}
                           placeholder="Select category..."
                           allowCustom={false}
                           clearable={true}
@@ -1490,10 +1529,7 @@ export const NewVoucherPage: React.FC = () => {
                         <SearchableSelect
                           value={departmentName}
                           onChange={setDepartmentName}
-                          options={departments.map((d) => ({
-                            value: d.department_name,
-                            label: d.department_name,
-                          }))}
+                          options={departmentOptions}
                           placeholder="Select department..."
                           allowCustom={false}
                           clearable={true}
@@ -1629,9 +1665,9 @@ export const NewVoucherPage: React.FC = () => {
               <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-[#222222]">
                 <StaffSplitTable
                   splits={splits}
-                  staffList={staff}
-                  categories={categories}
-                  departments={departments}
+                  staffList={activeStaff}
+                  categories={activeCategories}
+                  departments={activeDepartments}
                   targetAmount={Number(amount) || undefined}
                   onChange={setSplits}
                 />
@@ -1648,7 +1684,7 @@ export const NewVoucherPage: React.FC = () => {
                     <SearchableSelect
                       value={courierCompany}
                       onChange={setCourierCompany}
-                      options={couriers.map((c) => ({
+                      options={activeCouriers.map((c) => ({
                         value: c.partner_name,
                         label: c.partner_name,
                       }))}
@@ -1680,10 +1716,7 @@ export const NewVoucherPage: React.FC = () => {
                     <SearchableSelect
                       value={categoryName}
                       onChange={setCategoryName}
-                      options={categories.map((c) => ({
-                        value: c.category_name,
-                        label: c.category_name,
-                      }))}
+                      options={categoryOptions}
                       placeholder="Select category..."
                       allowCustom={false}
                       clearable={true}
@@ -1697,10 +1730,7 @@ export const NewVoucherPage: React.FC = () => {
                     <SearchableSelect
                       value={departmentName}
                       onChange={setDepartmentName}
-                      options={departments.map((d) => ({
-                        value: d.department_name,
-                        label: d.department_name,
-                      }))}
+                      options={departmentOptions}
                       placeholder="Select department..."
                       allowCustom={false}
                       clearable={true}
@@ -1769,7 +1799,7 @@ export const NewVoucherPage: React.FC = () => {
                     </span>
                   </div>
                   <span className="px-2.5 py-1 rounded-[6px] text-xs font-mono font-medium bg-slate-100 dark:bg-[#202020] text-slate-700 dark:text-zinc-300 border border-slate-200 dark:border-[#2e2e2e]">
-                    {paymentMethod === 'Physical_Cash' ? 'Cash Box' : 'Online UPI'}
+                    {paymentMethod === 'Physical_Cash' ? 'Cash' : 'UPI'}
                   </span>
                 </div>
 
@@ -1880,13 +1910,13 @@ export const NewVoucherPage: React.FC = () => {
                     <span className="font-medium text-slate-900 dark:text-white flex items-center gap-1.5">
                       {paymentMethod === 'Physical_Cash' ? (
                         <>
-                          <Coins className="w-3.5 h-3.5 text-emerald-500" />
-                          <span>Cash Box</span>
+                          <IndianRupee className="w-3.5 h-3.5 text-emerald-500 stroke-[2.2]" />
+                          <span>Cash</span>
                         </>
                       ) : (
                         <>
                           <CreditCard className="w-3.5 h-3.5 text-sky-500" />
-                          <span>Online UPI</span>
+                          <span>UPI</span>
                         </>
                       )}
                     </span>
@@ -2014,6 +2044,53 @@ export const NewVoucherPage: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Statutory Section 40A(3) Income Tax Warning Alert in Preview Modal */}
+                {paymentMethod === 'Physical_Cash' && finalCalculatedAmount > 10000 && (
+                  <div className="space-y-3 pt-1">
+                    <div className="p-3.5 rounded-[8px] bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-left space-y-2">
+                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-300">
+                        <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                        <div className="space-y-0.5">
+                          <strong className="block font-semibold text-xs text-rose-900 dark:text-rose-200">
+                            Statutory Warning: Section 40A(3) Income Tax Act Limit Exceeded
+                          </strong>
+                          <p className="text-[11px] leading-relaxed text-rose-800/90 dark:text-rose-300/90">
+                            Cash payment of {formatINR(finalCalculatedAmount)} exceeds the ₹10,000 threshold. Under Section 40A(3), this expenditure will be disallowed for corporate tax deduction unless covered by Rule 6DD.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-rose-200/60 dark:border-rose-500/20">
+                        <span className="text-[10px] text-rose-700 dark:text-rose-400 font-mono">
+                          Safe Alternative: Disburse via UPI
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentMethod('Online_UPI');
+                            setSec40A3Acknowledged(false);
+                          }}
+                          className="px-2.5 py-1 rounded-[4px] bg-white dark:bg-[#1a1a1a] text-slate-800 dark:text-white border border-rose-300 dark:border-rose-500/40 text-[11px] font-semibold hover:bg-rose-50 dark:hover:bg-[#252525] cursor-pointer transition-colors shadow-2xs"
+                        >
+                          Switch to UPI Now
+                        </button>
+                      </div>
+                    </div>
+
+                    <label className="flex items-start gap-2 p-2.5 rounded-[6px] bg-amber-50/60 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 cursor-pointer text-left select-none">
+                      <input
+                        type="checkbox"
+                        checked={sec40A3Acknowledged}
+                        onChange={(e) => setSec40A3Acknowledged(e.target.checked)}
+                        className="mt-0.5 rounded border-amber-400 text-[#3ecf8e] focus:ring-[#3ecf8e] cursor-pointer"
+                      />
+                      <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200 leading-snug">
+                        I acknowledge this payment exceeds the Section 40A(3) ₹10,000 cash limit and authorize this tax exception.
+                      </span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Modal Actions */}
@@ -2030,6 +2107,7 @@ export const NewVoucherPage: React.FC = () => {
                   type="button"
                   submitting={submitting}
                   submittingText="Saving..."
+                  disabled={paymentMethod === 'Physical_Cash' && finalCalculatedAmount > 10000 && !sec40A3Acknowledged}
                   onClick={executeFinalDisbursal}
                   size="md"
                 >

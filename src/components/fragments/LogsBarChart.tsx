@@ -110,7 +110,7 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
       return [
         {
           id: 'cash-drawer',
-          serviceName: 'CASH BOX SPENT',
+          serviceName: 'CASH SPENT',
           subLabel: 'Cash Paid from Drawer',
           value: formatINR(metrics.cashPaid),
           warningCount: highCashVouchers.length,
@@ -200,7 +200,7 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
       {
         id: 'total-spend',
         serviceName: 'ALL MONEY SPENT',
-        subLabel: 'Cash + Online UPI Payments',
+        subLabel: 'Cash + UPI Payments',
         value: formatINR(metrics.totalSpend),
         warningCount: totalWarnings,
         errorCount: totalErrors,
@@ -210,8 +210,8 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
       },
       {
         id: 'cash-drawer',
-        serviceName: 'CASH BOX SPENT',
-        subLabel: 'Cash Paid from Cash Box',
+        serviceName: 'CASH SPENT',
+        subLabel: 'Cash Paid from Drawer',
         value: formatINR(metrics.cashPaid),
         warningCount: vouchers.filter((v) => v.payment_method === 'Physical_Cash' && Number(v.total_amount) > 10000).length,
         errorCount: vouchers.filter((v) => v.payment_method === 'Physical_Cash' && v.status === 'Voided').length,
@@ -221,8 +221,8 @@ export const LogsBarChart: React.FC<LogsBarChartProps> = ({ metrics, vouchers = 
       },
       {
         id: 'upi-online',
-        serviceName: 'UPI & ONLINE PAYMENTS',
-        subLabel: 'Online QR & UPI Transfers',
+        serviceName: 'UPI PAYMENTS',
+        subLabel: 'QR & UPI Transfers',
         value: formatINR(metrics.upiPaid),
         warningCount: vouchers.filter((v) => v.payment_method === 'Online_UPI' && Number(v.total_amount) > 10000).length,
         errorCount: vouchers.filter((v) => v.payment_method === 'Online_UPI' && v.status === 'Voided').length,

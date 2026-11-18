@@ -246,7 +246,7 @@ export const DuplicateDetectionModal: React.FC<DuplicateDetectionModalProps> = (
                                   {formatINR(v.total_amount)}
                                 </span>
                                 <div className="text-[10px] font-mono text-slate-500 dark:text-[#888]">
-                                  {v.payment_method === 'Physical_Cash' ? 'Physical Cash' : 'Online UPI'}
+                                  {v.payment_method === 'Physical_Cash' ? 'Cash' : 'UPI'}
                                 </div>
                               </div>
                             </div>

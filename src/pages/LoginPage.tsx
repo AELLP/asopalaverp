@@ -153,7 +153,6 @@ export const LoginPage: React.FC = () => {
             return false;
           }
         }
-        if (import.meta.env.DEV && storedHash === plain) return true;
         return false;
       };
 

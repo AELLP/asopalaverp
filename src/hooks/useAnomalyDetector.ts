@@ -46,7 +46,7 @@ export function useAnomalyDetector(vouchers: ExpenseVoucher[]) {
 
     catMap.forEach((amounts, cat) => {
       if (amounts.length < 3) return; // Need at least 3 historical points to form a baseline
-      const sorted = [...amounts].sort((a, b) => a - b);
+      const sorted = amounts.toSorted((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
       const median =
         sorted.length % 2 !== 0

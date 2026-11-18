@@ -30,6 +30,21 @@ export const VALID_PAGES: PageId[] = [
   'notifications',
 ];
 
+export const normalizePageId = (p: string | null): PageId => {
+  if (!p) return 'dashboard';
+  const clean = p.toLowerCase().trim();
+  if (clean === 'add' || clean === 'new' || clean === 'voucher' || clean === 'add-expense' || clean === 'new_voucher') return 'new-voucher';
+  if (clean === 'all-expenses' || clean === 'all_expenses' || clean === 'vouchers' || clean === 'all-vouchers' || clean === 'expense-list') return 'expenses';
+  if (clean === 'cash' || clean === 'drawer' || clean === 'passbook' || clean === 'upi') return 'treasury';
+  if (clean === 'advance' || clean === 'advances' || clean === 'staff-advances' || clean === 'staff_advances') return 'advances';
+  if (clean === 'logs' || clean === 'logbook' || clean === 'security' || clean === 'audit-log') return 'audit';
+  if (clean === 'users' || clean === 'directory' || clean === 'employees') return 'staff';
+  if (clean === 'report' || clean === 'tally' || clean === 'financials') return 'reports';
+  if (clean === 'settings' || clean === 'showroom-settings' || clean === 'showroom_settings' || clean === 'master-data') return 'settings';
+  if (VALID_PAGES.includes(clean as PageId)) return clean as PageId;
+  return '404';
+};
+
 export type ThemeMode = 'dark' | 'light' | 'soft-dark';
 
 interface UIState {
@@ -99,8 +114,18 @@ const applyThemeToDom = (theme: ThemeMode) => {
     if (body) body.classList.add('light');
   }
   root.setAttribute('data-theme', theme);
+  const scheme = theme === 'light' ? 'light' : 'dark';
+  root.style.colorScheme = scheme;
 
-  // Update browser theme-color meta tag for native mobile navigation bars
+  // Update color-scheme and theme-color meta tags for browsers and native mobile navigation
+  let metaColorScheme = document.querySelector('meta[name="color-scheme"]');
+  if (!metaColorScheme) {
+    metaColorScheme = document.createElement('meta');
+    metaColorScheme.setAttribute('name', 'color-scheme');
+    document.head.appendChild(metaColorScheme);
+  }
+  metaColorScheme.setAttribute('content', scheme);
+
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
     if (theme === 'light') {
@@ -128,10 +153,7 @@ const getInitialTheme = (): ThemeMode => {
 const getInitialPage = (): PageId => {
   if (typeof window !== 'undefined') {
     const params = new URLSearchParams(window.location.search);
-    const p = params.get('page');
-    if (!p) return 'dashboard';
-    if (VALID_PAGES.includes(p as PageId)) return p as PageId;
-    return '404';
+    return normalizePageId(params.get('page'));
   }
   return 'dashboard';
 };
@@ -216,7 +238,8 @@ export const useUIStore = create<UIState>((set) => ({
   toggleMobileSidebar: () => set((state) => ({ isMobileSidebarOpen: !state.isMobileSidebarOpen })),
   setSidebarCollapsed: (isSidebarCollapsed) => set({ isSidebarCollapsed }),
   toggleSidebarCollapse: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
-  setActivePage: (activePage, updateHistory = true) => {
+  setActivePage: (rawPage, updateHistory = true) => {
+    const activePage = normalizePageId(rawPage);
     if (typeof window !== 'undefined' && updateHistory) {
       const url = new URL(window.location.href);
       if (activePage === 'dashboard') {

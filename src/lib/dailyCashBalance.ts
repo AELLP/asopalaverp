@@ -1,4 +1,4 @@
-import { WalletLedger } from '@/types/database';
+import { ExpenseVoucher, WalletLedger } from '@/types/database';
 import { format } from 'date-fns';
 
 export interface DayCashRecord {
@@ -42,18 +42,18 @@ export function calculateDailyCashBalances(
   ledgerEntries: WalletLedger[],
   currentWalletCash: number,
   startDate?: string,
-  endDate?: string
+  endDate?: string,
+  vouchers?: ExpenseVoucher[]
 ): PeriodCashSummary {
-  // Filter exclusively for Cash transactions
-  const cashEntries = ledgerEntries.filter((l) => l.wallet_type === 'Cash');
-
-  // Group cash entries by calendar day (YYYY-MM-DD)
+  // Group all transactions and vouchers by calendar day (YYYY-MM-DD)
+  // Ensures that days with UPI-only vouchers or digital entries are 100% captured without missing records.
   const daysMap = new Map<
     string,
     { date: string; inflow: number; outflow: number; count: number; entries: WalletLedger[] }
   >();
 
-  cashEntries.forEach((entry) => {
+  // 1. Process all ledger entries (both Cash and UPI entries)
+  ledgerEntries.forEach((entry) => {
     const d = entry.created_at ? entry.created_at.slice(0, 10) : '';
     if (!d) return;
 
@@ -61,11 +61,36 @@ export function calculateDailyCashBalances(
       daysMap.set(d, { date: d, inflow: 0, outflow: 0, count: 0, entries: [] });
     }
     const day = daysMap.get(d)!;
-    day.inflow += Number(entry.credit_amount) || 0;
-    day.outflow += Number(entry.debit_amount) || 0;
-    day.count += 1;
     day.entries.push(entry);
+
+    // Only Cash wallet transactions affect drawer cash inflows and outflows
+    if (entry.wallet_type === 'Cash') {
+      const isOpeningEntry =
+        entry.reference_number === 'FLT-869729' ||
+        (entry.remarks && (entry.remarks.includes('Opening Cash Balance') || entry.remarks.includes('Oct Month Opening Balance')));
+
+      if (!isOpeningEntry) {
+        day.inflow += Number(entry.credit_amount) || 0;
+        day.outflow += Number(entry.debit_amount) || 0;
+      }
+    }
+    day.count += 1;
   });
+
+  // 2. Ensure all voucher dates exist in the timeline (zero missing days with vouchers)
+  if (vouchers && vouchers.length > 0) {
+    vouchers.forEach((v) => {
+      const d = (v.payment_date || v.created_at || '').slice(0, 10);
+      if (!d) return;
+      if (!daysMap.has(d)) {
+        daysMap.set(d, { date: d, inflow: 0, outflow: 0, count: 0, entries: [] });
+      }
+      const day = daysMap.get(d)!;
+      if (day.entries.length === 0) {
+        day.count += 1;
+      }
+    });
+  }
 
   // Ensure today's date exists in the timeline
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -142,7 +167,7 @@ export function calculateDailyCashBalances(
 
   if (filteredDays.length > 0) {
     // Chronological order for bounds:
-    const chrono = [...filteredDays].sort((a, b) => a.date.localeCompare(b.date));
+    const chrono = filteredDays.toSorted((a, b) => a.date.localeCompare(b.date));
     periodOpening = chrono[0].opening;
     periodClosing = chrono[chrono.length - 1].closing;
     periodInflows = chrono.reduce((sum, d) => sum + d.inflow, 0);
